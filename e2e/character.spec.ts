@@ -52,7 +52,7 @@ test('real worker preserves white character features and removes only the exteri
   await page.screenshot({ path: 'artifacts/character-protection.png', fullPage: true });
 });
 
-test('real region editor erases, undoes, restores from an imprecise stroke, cancels and downloads edits', async ({ page }) => {
+test('real region editor erases, undoes, honors the full restore stroke, cancels and downloads edits', async ({ page }) => {
   await page.goto('/'); await uploadCharacter(page);
   const open = page.getByRole('button', { name: '대략 표시해서 자동 보정' });
   await open.click();
@@ -79,7 +79,7 @@ test('real region editor erases, undoes, restores from an imprecise stroke, canc
   await expect(editor.getByRole('button', { name: '편집 적용' })).toBeDisabled();
   await page.mouse.up();
   await expect.poll(alpha).toBe(255);
-  expect(await canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(7, 68, 1, 1).data[3])).toBe(0);
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(7, 68, 1, 1).data[3])).toBe(255);
   expect(await canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(64, 100, 1, 1).data[3])).toBe(255);
   await page.screenshot({ path: 'artifacts/smart-repair.png', fullPage: true });
   await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();

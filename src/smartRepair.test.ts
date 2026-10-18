@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { removeCharacterBackground } from './character';
-import { analyzeRepair, smartRepair } from './smartRepair';
+import { analyzeRepair, smartRepair as repairStroke } from './smartRepair';
+import type { BrushMode, CharacterRegions, Point } from './character';
+
+const smartRepair = (original: Uint8ClampedArray, current: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, point: Point, mode: BrushMode, regions: CharacterRegions | null) => repairStroke(original, current, width, height, { points: [point], radius: 3, mode }, regions);
 
 function brokenCharacter(scale = 1) {
   const width = 128 * scale; const height = width;
@@ -67,12 +70,14 @@ describe('region hints', () => {
     expect(repaired.pixels).toEqual(cutout);
     expect(spilled).not.toEqual(cutout); // no mutation; undo retains the previous mask
   });
-  it('a keep hint on the exterior cannot fill the whole canvas', () => {
+  it('a keep hint outside the automatic silhouette is honored locally without filling the whole canvas', () => {
     const { pixels, width, height } = brokenCharacter();
     const cutout = removeCharacterBackground(pixels, width, height);
     const repaired = smartRepair(pixels, cutout, width, height, { x: 2, y: 2 }, 'restore', analyzeRepair(pixels, width, height));
-    expect(repaired.changed).toBe(0);
-    expect(repaired.pixels).toEqual(cutout);
+    expect(repaired.changed).toBeGreaterThan(0);
+    expect(repaired.changed).toBeLessThan(200);
+    expect(repaired.pixels[(2 * width + 2) * 4 + 3]).toBe(255);
+    expect(repaired.pixels[(2 * width + 120) * 4 + 3]).toBe(0);
   });
   it('erasing an enclosed white region leaves other enclosed regions and the outline intact', () => {
     const { pixels, width, height, alpha } = brokenCharacter();
@@ -102,7 +107,8 @@ describe('region hints', () => {
     const analysis = analyzeRepair(pixels, width, height);
     expect(analysis).toBeNull();
     const repaired = smartRepair(pixels, damaged, width, height, { x: 10, y: 20 }, 'restore', analysis);
-    expect(repaired.changed).toBe(800);
+    expect(repaired.changed).toBeGreaterThan(50);
+    expect(repaired.pixels[(20 * width + 10) * 4 + 3]).toBe(255);
     expect(repaired.pixels[(20 * width + 30) * 4 + 3]).toBe(0);
   });
 });

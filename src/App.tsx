@@ -3,8 +3,9 @@ import { ArrowDown, ArrowDownToLine, ArrowRight, Brush, Check, ChevronDown, Imag
 import { downloadName, validateFile } from './media';
 import type { ProcessUpdate, Quality, RemovalMode } from './types';
 import MaskEditor from './MaskEditor';
+import type { RepairMemory } from './repairHints';
 
-type Result = { url: string; blob: Blob; width: number; height: number; frames: number };
+type Result = { url: string; blob: Blob; width: number; height: number; frames: number; repair?: RepairMemory };
 const backgrounds = [
   { name: '투명', color: 'transparent' }, { name: '화이트', color: '#ffffff' },
   { name: '라임', color: '#d9efbc' }, { name: '라벤더', color: '#dcd5f1' }, { name: '다크', color: '#30332d' },
@@ -121,10 +122,10 @@ export default function App() {
     setMode(value); setError(''); setResult(null); setEditing(false);
   }
 
-  function applyEdit(blob: Blob) {
+  function applyEdit(blob: Blob, repair?: RepairMemory) {
     if (!result) return;
     URL.revokeObjectURL(result.url);
-    setResult({ ...result, blob, url: makeUrl(blob) }); setEditing(false); setView('result');
+    setResult({ ...result, blob, repair, url: makeUrl(blob) }); setEditing(false); setView('result');
   }
 
   const isDemo = !file;
@@ -197,14 +198,14 @@ export default function App() {
       <section className="how-section" id="how"><div className="section-heading"><span className="section-kicker">HOW IT WORKS</span><h2>세 번이면 충분해요.</h2><p>덜어내는 과정도, 가벼워야 하니까.</p></div><div className="steps"><div><span>01</span><h3>이미지 가져오기</h3><p>사진이나 GIF를 선택하거나<br />이 페이지에 끌어다 놓으세요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>02</span><h3>배경 지우기</h3><p>캐릭터 보호 또는 사진 AI를 골라요.<br />필요한 부분은 복원으로 다듬어요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>03</span><h3>자유롭게 사용하기</h3><p>투명한 PNG 또는 GIF로 저장해<br />원하는 곳에 활용하세요.</p></div></div></section>
 
       <section className="faq-section" id="faq"><div><span className="section-kicker">GOOD TO KNOW</span><h2>궁금한 점이 있나요?</h2><p>시작하기 전에 알아두면 좋아요.</p><ArrowDown size={22} /></div><div className="faq-list">
-        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. PNG 결과의 ‘대략 표시해서 자동 보정’에서 얼굴 안쪽을 대략 표시하면 같은 윤곽 안의 원본 색을 복원하고, 바깥 배경을 표시하면 이어진 잔여 배경을 정리해요. 크게 열린 윤곽이나 복잡한 사진에서는 영역 선택이 다를 수 있어 되돌리기로 확인해 주세요. GIF에는 캐릭터 보호가 프레임마다 적용되며 영역 보정은 PNG에서 지원해요.</p></details>
+        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. PNG 결과의 ‘대략 표시해서 자동 보정’은 칠한 선 전체를 반영해요. 윤곽이 열려 있어도 표시한 곳과 주변을 복원하고, 같은 곳을 다시 칠하면 더 넓게 보정해요. 적용 후 다시 열어도 이전 표시를 기억해요. 원치 않는 곳까지 반영되면 되돌리거나 반대 도구로 수정할 수 있어요. GIF에는 캐릭터 보호가 프레임마다 적용되며 영역 보정은 PNG에서 지원해요.</p></details>
         <details><summary>정말 무료인가요?<ChevronDown size={17} /></summary><p>네. 회원가입이나 API 키 없이 사용할 수 있어요. 배경 제거는 내 기기의 연산으로 진행돼요. 캐릭터 보호는 모델 다운로드 없이 작동하고, 사진 AI는 처음에 AI 모델과 실행 파일을 다운로드해요.</p></details>
         <details><summary>움짤도 움직인 채로 저장되나요?<ChevronDown size={17} /></summary><p>GIF의 각 프레임을 처리해 원본의 프레임 수, 재생 간격과 반복 설정을 유지해요. 최대 120프레임·20MB까지 지원해요. GIF는 최대 256색과 완전 투명만 지원하므로 가장자리가 거칠거나 프레임 사이에 경계가 조금 달라질 수 있어요. 움직이는 WebP와 PNG는 GIF로 변환해 주세요.</p></details>
         <details><summary>파일의 크기와 화질은 어떻게 되나요?<ChevronDown size={17} /></summary><p>빠르게 모드는 긴 변 기준 사진 최대 2,048px·GIF 768px, 꼼꼼하게 모드는 사진 4,096px·GIF 1,024px로 저장해요. 작은 이미지는 확대하지 않아요. 사진은 4,000만 화소, GIF는 프레임당 400만 화소까지 지원해요. 복잡한 배경이나 반투명 물체는 결과가 정확하지 않을 수 있어요.</p></details>
         <details><summary>사진이 서버에 남지는 않나요?<ChevronDown size={17} /></summary><p>이미지 파일은 외부 서버로 전송하지 않아요. AI 모델만 IMG.LY 서버에서 내려받고, 배경 제거는 브라우저 안에서 진행해요. 페이지를 닫으면 작업 결과는 사라지므로 필요한 파일은 미리 다운로드해 주세요. 미리보기 배경색은 다운로드 파일에 포함되지 않아요.</p></details>
       </div></section>
     </main>
-    {editing && result && file && <MaskEditor original={file} result={result.blob} width={result.width} height={result.height} onApply={applyEdit} onClose={() => setEditing(false)} />}
+    {editing && result && file && <MaskEditor original={file} result={result.blob} width={result.width} height={result.height} memory={result.repair} onApply={applyEdit} onClose={() => setEditing(false)} />}
     <footer><a className="brand footer-brand" href="#">off<span className="brand-dot">.</span></a><span>조금 덜어내고, 더 자유롭게.</span><div><a href="https://github.com/BAEPPY/removebackground" target="_blank" rel="noreferrer">소스 코드</a><span>Made for your next idea.</span></div></footer>
   </>;
 }
