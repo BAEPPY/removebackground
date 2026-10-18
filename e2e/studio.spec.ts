@@ -35,21 +35,25 @@ test('mobile has no horizontal overflow and FAQ works', async ({ page }) => {
 test('rejects unsupported and corrupt files without a download', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type=file]').setInputFiles({ name: 'bad.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') });
-  await expect(page.getByRole('alert')).toContainText('JPG, PNG, WebP');
+  await expect(page.getByRole('alert')).toContainText('JPG, JFIF, PNG, WebP');
   await page.locator('input[type=file]').setInputFiles({ name: 'broken.gif', mimeType: 'image/gif', buffer: Buffer.from('not a gif') });
   await page.getByRole('button', { name: '배경 지우기', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('올바른 GIF');
   await expect(page.getByRole('button', { name: /다운로드/ })).toHaveCount(0);
 });
 
-test('processing, cancellation, retry and download controls with a worker fixture', async ({ page }) => {
+test('JFIF decoding, processing controls and PNG download with a worker fixture', async ({ page }) => {
   // This fixture covers the UI lifecycle only. It does not claim to test AI inference.
   await page.addInitScript(() => {
     class FixtureWorker {
       onmessage: ((event: { data: unknown }) => void) | null = null;
       onerror = null;
       timer?: ReturnType<typeof setTimeout>;
-      postMessage() {
+      async postMessage({ file }: { file: File }) {
+        if (file.type !== 'image/jpeg') throw new Error('JFIF MIME type was not normalized');
+        const bitmap = await createImageBitmap(file);
+        if (bitmap.width !== 32 || bitmap.height !== 24) throw new Error('JFIF did not decode correctly');
+        bitmap.close();
         this.onmessage?.({ data: { type: 'progress', value: 50, message: '테스트 처리 중' } });
         this.timer = setTimeout(() => {
           const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
@@ -61,7 +65,19 @@ test('processing, cancellation, retry and download controls with a worker fixtur
     Object.defineProperty(window, 'Worker', { value: FixtureWorker });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '예시로 시작하기' }).click();
+  const jpeg = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 24;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#b8ec7d'; context.fillRect(0, 0, 32, 24);
+    return canvas.toDataURL('image/jpeg').split(',')[1];
+  });
+  const bytes = Buffer.from(jpeg, 'base64');
+  expect(bytes.subarray(6, 10).toString()).toBe('JFIF');
+  const input = page.locator('input[type=file]');
+  await expect(input).toHaveAttribute('accept', /\.jfif/);
+  await input.setInputFiles({ name: '사진.JFIF', mimeType: 'application/octet-stream', buffer: bytes });
+  await expect(page.getByText('사진.JFIF', { exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: '선택한 원본 이미지' })).toHaveJSProperty('naturalWidth', 32);
   await page.getByRole('button', { name: '배경 지우기', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('테스트 처리 중');
   await page.getByRole('button', { name: '처리 취소' }).click();
@@ -72,6 +88,6 @@ test('processing, cancellation, retry and download controls with a worker fixtur
   const downloadPromise = page.waitForEvent('download');
   await downloadButton.click();
   const downloaded = await downloadPromise;
-  expect(downloaded.suggestedFilename()).toBe('sunflower-off.png');
+  expect(downloaded.suggestedFilename()).toBe('사진-off.png');
   await expect(page.getByRole('slider')).toBeVisible();
 });

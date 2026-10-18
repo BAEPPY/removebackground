@@ -35,14 +35,18 @@ export default function App() {
     if (busy) return;
     const issue = validateFile(selected);
     if (issue) { setError(issue); return; }
+    // JFIF contains JPEG data, but some systems label it with a generic MIME type.
+    const image = /\.jfif$/i.test(selected.name) && selected.type !== 'image/jpeg'
+      ? new File([selected], selected.name, { type: 'image/jpeg', lastModified: selected.lastModified })
+      : selected;
     clearUrls();
-    setError(''); setFile(selected); setOriginal(makeUrl(selected)); setResult(null);
+    setError(''); setFile(image); setOriginal(makeUrl(image)); setResult(null);
     setView('compare'); setSplit(48);
   }, [busy]);
 
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
-      const selected = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith('image/'));
+      const selected = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith('image/') || /\.jfif$/i.test(item.name));
       if (selected) { event.preventDefault(); selectFile(selected); }
     };
     window.addEventListener('paste', paste);
@@ -132,13 +136,13 @@ export default function App() {
             onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; }}
             onDragLeave={(event) => { event.preventDefault(); depth.current--; if (depth.current <= 0) setDragging(false); }}
             onDrop={(event) => { event.preventDefault(); depth.current = 0; setDragging(false); if (event.dataTransfer.files[0]) selectFile(event.dataTransfer.files[0]); }}>
-            <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="visually-hidden" disabled={busy}
+            <input ref={fileInput} type="file" accept=".jfif,image/jpeg,image/png,image/webp,image/gif" className="visually-hidden" disabled={busy}
               onChange={(event) => { if (event.target.files?.[0]) selectFile(event.target.files[0]); event.target.value = ''; }} aria-label="사진 또는 GIF 선택" />
             {!file ? <>
               <div className="upload-symbol"><ImagePlus size={26} strokeWidth={1.5} /><span className="tiny-spark">✦</span></div>
               <button className="primary upload-button" onClick={() => fileInput.current?.click()}><Upload size={18} /> 이미지 선택 <ArrowRight size={18} /></button>
               <p className="drop-copy">여기에 파일을 끌어다 놓아도 좋아요</p>
-              <p className="file-types">JPG · PNG · WebP · GIF <span>최대 20MB</span></p>
+              <p className="file-types">JPG · JFIF · PNG · WebP · GIF <span>최대 20MB</span></p>
             </> : <>
               <div className="selected-file"><div className="file-icon"><Layers2 size={22} /></div><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(2)} MB · {/\.gif$/i.test(file.name) ? '움직이는 GIF' : '사진'}</span></div><button className="icon-button" onClick={reset} disabled={busy} aria-label="선택한 파일 삭제"><X size={18} /></button></div>
               {busy ? <div className="processing" role="status" aria-live="polite"><div><LoaderCircle size={17} className="spin" /><strong>{status.message}</strong></div><progress max="100" value={status.value} aria-label="배경 제거 진행률" /><p>{status.detail || '이미지에 따라 잠시 시간이 걸릴 수 있어요'}</p><button className="text-button" onClick={cancel}>처리 취소</button></div>

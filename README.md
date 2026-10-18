@@ -31,7 +31,7 @@ Vercel CLI를 쓰는 경우, 계정에 로그인한 로컬 터미널에서 `npx 
 
 ## 기능
 
-- JPG, PNG, 정적 WebP → 투명 PNG
+- JPG/JPEG, JFIF, PNG, 정적 WebP → 투명 PNG
 - GIF → 프레임별 배경 제거 후 투명 GIF. 프레임 수, 원본 지연 시간, 반복 횟수 유지
 - GIF의 부분 프레임, 투명 패치, disposal 2/3 복원 처리
 - 파일 선택, 드래그 앤 드롭, 클립보드 붙여넣기

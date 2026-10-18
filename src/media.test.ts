@@ -67,6 +67,10 @@ describe('input and output constraints', () => {
     expect(validateFile({ name: 'a.png', type: 'image/png', size: MAX_BYTES + 1 })).toBeTruthy();
     expect(validateFile({ name: 'a.jpg', type: 'image/jpeg', size: 0 })).toBeTruthy();
     expect(validateFile({ name: 'a.GIF', type: '', size: 42 })).toBeNull();
+    for (const type of ['image/jpeg', 'image/jfif', 'image/pjpeg', 'application/octet-stream', '']) {
+      expect(validateFile({ name: '사진.JFIF', type, size: 42 })).toBeNull();
+    }
+    expect(validateFile({ name: 'a.jfif', type: 'text/html', size: 42 })).toBeTruthy();
   });
   it('downscales proportionally without upscaling', () => {
     expect(fitSize(4000, 2000, 2048)).toEqual({ width: 2048, height: 1024 });
@@ -75,6 +79,7 @@ describe('input and output constraints', () => {
   });
   it('preserves Korean names and sets the correct output extension', () => {
     expect(downloadName('나의.사진.JPG', false)).toBe('나의.사진-off.png');
+    expect(downloadName('사진.jfif', false)).toBe('사진-off.png');
     expect(downloadName('고양이.gif', true)).toBe('고양이-off.gif');
   });
 });

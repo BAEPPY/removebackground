@@ -7,9 +7,10 @@ export const MAX_FRAMES = 120;
 export function validateFile(file: Pick<File, 'name' | 'size' | 'type'>): string | null {
   if (!file.size) return '비어 있는 파일이에요. 다른 파일을 선택해 주세요.';
   if (file.size > MAX_BYTES) return '20MB 이하의 파일을 선택해 주세요.';
-  if (!/\.(jpe?g|png|webp|gif)$/i.test(file.name) ||
-      (file.type && !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type))) {
-    return 'JPG, PNG, WebP 사진 또는 GIF 움짤을 선택해 주세요.';
+  const jfifMime = /\.jfif$/i.test(file.name) && ['image/jfif', 'image/pjpeg', 'application/octet-stream'].includes(file.type);
+  if (!/\.(jpe?g|jfif|png|webp|gif)$/i.test(file.name) ||
+      (file.type && !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type) && !jfifMime)) {
+    return 'JPG, JFIF, PNG, WebP 사진 또는 GIF 움짤을 선택해 주세요.';
   }
   return null;
 }
