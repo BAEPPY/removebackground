@@ -25,7 +25,7 @@ test('GPT mode gates setup, preserves source colors and only calls API on explic
   await page.locator('input[type=file]').setInputFiles({ name: 'api-source.png', mimeType: 'image/png', buffer: Buffer.from(fixture.original, 'base64') });
   const run = page.getByRole('button', { name: '배경 지우기', exact: true });
   await expect(run).toBeDisabled(); await page.getByLabel('개인용 비밀번호', { exact: true }).fill('personal-password-123');
-  await expect(page.getByText('이번 배경 제거: API 1회 호출 예정')).toBeVisible();
+  await expect(page.getByText('이번 배경 제거: API 최대 1회')).toBeVisible();
   await run.click(); await expect(page.getByRole('button', { name: '투명 PNG 다운로드' })).toBeVisible();
   expect(calls).toHaveLength(1); expect(calls[0].images).toHaveLength(1); expect(calls[0].action).toBe('remove');
   const pixel = () => page.evaluate(async () => {
@@ -41,11 +41,18 @@ test('GPT mode gates setup, preserves source colors and only calls API on explic
   const canvas = editor.locator('canvas'); const box = (await canvas.boundingBox())!;
   await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
   await expect(editor.getByRole('button', { name: '되돌리기' })).toBeEnabled(); expect(calls).toHaveLength(1);
+  await editor.getByRole('button', { name: '남길 부분 복원' }).click();
+  await canvas.click({ position: { x: box.width / 4, y: box.height / 2 } });
+  await expect(editor.getByText(/GPT 보정 대상 표시 2개/)).toBeVisible();
+  expect(calls).toHaveLength(1);
   await editor.getByRole('button', { name: '표시한 곳 GPT로 보정' }).click();
   await expect(editor.getByRole('status')).toContainText('GPT 영역 보정을 적용');
-  expect(calls).toHaveLength(2); expect(calls[1].images).toHaveLength(3); expect(calls[1].action).toBe('erase');
+  expect(calls).toHaveLength(2); expect(calls[1].images).toHaveLength(2); expect(calls[1].action).toBe('correct');
   const before = await canvas.evaluate((c: HTMLCanvasElement) => [...c.getContext('2d')!.getImageData(0, 0, 64, 48).data]);
-  fail = true; await editor.getByRole('button', { name: '표시한 곳 GPT로 보정' }).click();
+  await editor.getByRole('button', { name: '표시한 곳 GPT로 보정' }).click();
+  await expect(editor.getByRole('status')).toContainText('새 API 0회'); expect(calls).toHaveLength(2);
+  fail = true; await editor.getByRole('checkbox', { name: '결과가 부족하면 새로 분석 (추가 과금)' }).check();
+  await editor.getByRole('button', { name: '표시한 곳 GPT로 보정' }).click();
   await expect(editor.getByRole('alert')).toContainText('사용 한도');
   expect(calls).toHaveLength(3); expect(await canvas.evaluate((c: HTMLCanvasElement) => [...c.getContext('2d')!.getImageData(0, 0, 64, 48).data])).toEqual(before);
   await editor.getByRole('button', { name: '취소', exact: true }).click(); expect(await pixel()).toEqual([202, 233, 244, 255]);
@@ -89,7 +96,7 @@ test('GPT handles GIF frames, reports call count and applies all-frame AI correc
   await page.getByRole('button', { name: 'GPT AI', exact: true }).click();
   await page.getByLabel('개인용 비밀번호', { exact: true }).fill('personal-password-123');
   await page.locator('input[type=file]').setInputFiles({ name: 'api.gif', mimeType: 'image/gif', buffer: Buffer.from(encoder.bytes()) });
-  await expect(page.getByText(/API 2회 호출 예정/)).toBeVisible();
+  await expect(page.getByText(/API 최대 2회/)).toBeVisible();
   await page.getByRole('button', { name: '배경 지우기', exact: true }).click();
   await expect(page.getByRole('link', { name: '부드러운 APNG 다운로드' })).toBeVisible(); expect(calls).toBe(2);
   await page.getByRole('button', { name: '대략 표시해서 자동 보정' }).click();
@@ -107,7 +114,7 @@ test('GPT handles GIF frames, reports call count and applies all-frame AI correc
   await expect(editor.getByRole('alert')).toContainText('AI 결과를 받지 못했어요'); expect(calls).toBe(4);
   expect(await canvas.evaluate((c: HTMLCanvasElement) => [...c.getContext('2d')!.getImageData(0, 0, 32, 24).data])).toEqual(before);
   failAt = 0; await editor.getByRole('button', { name: '표시한 곳 GPT로 보정' }).click();
-  await expect(editor.getByRole('status')).toContainText('모든 2프레임'); expect(calls).toBe(6);
+  await expect(editor.getByRole('status')).toContainText('모든 2프레임'); expect(calls).toBe(5); // the successful frame from the failed batch is reused
   await apply.click(); await expect(editor).toHaveCount(0);
   await expect(page.getByRole('link', { name: '부드러운 APNG 다운로드' })).toBeVisible();
 });

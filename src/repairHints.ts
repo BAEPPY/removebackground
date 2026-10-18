@@ -1,8 +1,20 @@
 import type { BrushMode, Point } from './character';
 
 export type RepairStroke = { points: Point[]; radius: number; mode: BrushMode; reach?: number };
-export type RepairState = { labels: Int8Array<ArrayBuffer>; strokes: RepairStroke[] };
-export type RepairMemory = { labels: Blob; strokes: RepairStroke[] };
+type AIHistory = { aiApplied?: number; aiBatchStart?: number };
+export type RepairState = AIHistory & { labels: Int8Array<ArrayBuffer>; strokes: RepairStroke[] };
+export type RepairMemory = AIHistory & { labels: Blob; strokes: RepairStroke[] };
+
+export function pendingAIStrokes(state: AIHistory & { strokes: RepairStroke[] }) {
+  const start = state.aiApplied ?? 0;
+  // Retrying an unchanged batch can use the cache, or explicitly request a
+  // fresh paid analysis. Repeated marks always remain eligible.
+  return state.strokes.slice(start < state.strokes.length ? start : state.aiBatchStart ?? Math.max(0, start - 1));
+}
+
+export function repairMemory(state: RepairState): RepairMemory {
+  return { ...state, labels: new Blob([state.labels]) };
+}
 
 export function emptyRepairState(width: number, height: number): RepairState {
   return { labels: new Int8Array(width * height), strokes: [] };

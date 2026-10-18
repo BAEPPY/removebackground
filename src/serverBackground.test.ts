@@ -48,6 +48,15 @@ describe('personal OpenAI server endpoint', () => {
     const form: FormData = fetch.mock.calls[0][1].body;
     expect(form.getAll('image[]')).toHaveLength(3); expect(form.get('prompt')).toContain('green KEEP');
   });
+  it('handles mixed mark batches using two input images without lowering quality', async () => {
+    configure(); const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: png().slice(22) }] }))); vi.stubGlobal('fetch', fetch);
+    expect((await call('POST', { images: [png(), png()], action: 'correct' })).statusCode).toBe(200);
+    const form: FormData = fetch.mock.calls[0][1].body;
+    expect(form.getAll('image[]')).toHaveLength(2); expect(form.get('quality')).toBe('medium');
+    expect(form.get('prompt')).toContain('green KEEP'); expect(form.get('prompt')).toContain('pink REMOVE');
+    expect((await call('POST', { images: [png()], action: 'correct' })).statusCode).toBe(400);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('does not retry paid failures or expose upstream errors', async () => {
     configure(); const fetch = vi.fn().mockResolvedValue(new Response('sensitive upstream message', { status: 429 })); vi.stubGlobal('fetch', fetch);
     const res = await call('POST', { images: [png()], action: 'remove' }); expect(res.statusCode).toBe(429); expect(fetch).toHaveBeenCalledTimes(1); expect(res.output.toString()).not.toContain('sensitive');

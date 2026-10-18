@@ -1,9 +1,10 @@
 import { analyzeRepair, smartRepair } from './smartRepair';
-import { emptyRepairState, type RepairState } from './repairHints';
+import { emptyRepairState, pendingAIStrokes, repairMemory, type RepairState } from './repairHints';
 import { refineEdges } from './edgeMatte';
 import type { RepairRequest, RepairUpdate } from './repairProtocol';
 import { openAICutout } from './apiImage';
-import { rememberAIMask } from './aiMask';
+import { rememberAIBatch } from './aiMask';
+import { apiStats, resetAPIStats } from './apiWorker';
 
 let width = 0; let height = 0;
 let source: Uint8ClampedArray<ArrayBuffer>;
@@ -31,7 +32,7 @@ self.onmessage = async ({ data }: MessageEvent<RepairRequest>) => {
       edited = await pixels(data.result, context);
       analysis = analyzeRepair(source, width, height);
       const memory = data.memory && !('kind' in data.memory) ? data.memory : undefined;
-      state = memory ? { labels: new Int8Array(await memory.labels.arrayBuffer()), strokes: memory.strokes } : emptyRepairState(width, height);
+      state = memory ? { ...memory, labels: new Int8Array(await memory.labels.arrayBuffer()) } : emptyRepairState(width, height);
       if (state.labels.length !== width * height) throw new Error('Invalid repair history');
       previous = null;
       send({ type: 'ready' });
@@ -41,13 +42,14 @@ self.onmessage = async ({ data }: MessageEvent<RepairRequest>) => {
     if (data.type === 'undo') {
       if (previous) { edited = previous.pixels; analysis = previous.analysis; state = previous.state; previous = null; }
     } else if (data.type === 'ai') {
-      const stroke = state.strokes.at(-1);
-      if (!stroke) throw new Error('먼저 남길 부분이나 지울 부분을 표시해 주세요.');
-      send({ type: 'progress', message: '표시한 영역을 GPT로 보정하고 있어요 · API 1회 호출' });
-      const pixels = await openAICutout(source, width, height, access, edited, stroke);
+      const hints = pendingAIStrokes(state);
+      if (!hints.length) throw new Error('먼저 남길 부분이나 지울 부분을 표시해 주세요.');
+      resetAPIStats();
+      send({ type: 'progress', message: `표시 ${hints.length}개를 함께 보정하고 있어요 · 최대 API 1회` });
+      const pixels = await openAICutout(source, width, height, access, edited, hints, data.fresh);
       previous = { pixels: edited, analysis, state };
-      state = rememberAIMask(edited, pixels, state, stroke); edited = pixels;
-      message = 'GPT 영역 보정을 적용했어요. 결과를 확인하거나 되돌릴 수 있어요.';
+      state = rememberAIBatch(edited, pixels, state, hints); edited = pixels;
+      message = `GPT 영역 보정을 적용했어요 · 표시 ${hints.length}개 · 새 API ${apiStats.calls}회 · 저장된 결과 ${apiStats.cached}회 재사용`;
     } else if (data.type === 'stroke') {
       const repaired = smartRepair(source, edited, width, height, data.stroke, analysis, state);
       // Even a stroke that finds no new pixels changes the next retry's reach.
@@ -59,7 +61,7 @@ self.onmessage = async ({ data }: MessageEvent<RepairRequest>) => {
     // Keep correction history based on the logical mask. Render the same
     // cleaned RGBA for the editor, the main preview and the downloaded PNG.
     surface.getContext('2d')!.putImageData(new ImageData(refineEdges(source, edited, width, height, state.labels), width, height), 0, 0);
-    send({ type: 'result', blob: await surface.convertToBlob({ type: 'image/png' }), memory: { labels: new Blob([state.labels]), strokes: state.strokes }, canUndo: !!previous, message });
+    send({ type: 'result', blob: await surface.convertToBlob({ type: 'image/png' }), memory: repairMemory(state), canUndo: !!previous, message });
   } catch (error) {
     send({ type: 'error', message: error instanceof Error && /[가-힣]/.test(error.message) ? error.message : '보정하지 못했어요. 편집을 닫고 다시 시도해 주세요.' });
   }

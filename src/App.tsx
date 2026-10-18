@@ -4,8 +4,9 @@ import { downloadName, validateFile } from './media';
 import type { ProcessUpdate, Quality, RemovalMode } from './types';
 import MaskEditor from './MaskEditor';
 import type { EditorMemory } from './repairProtocol';
+import { APISession, type APIRequest, type APIStats } from './apiSession';
 
-type Result = { url: string; blob: Blob; width: number; height: number; frames: number; repair?: EditorMemory; smoothBlob?: Blob; smoothUrl?: string };
+type Result = { url: string; blob: Blob; width: number; height: number; frames: number; repair?: EditorMemory; smoothBlob?: Blob; smoothUrl?: string; apiStats?: APIStats };
 const backgrounds = [
   { name: '투명', color: 'transparent' }, { name: '화이트', color: '#ffffff' },
   { name: '라임', color: '#d9efbc' }, { name: '라벤더', color: '#dcd5f1' }, { name: '다크', color: '#30332d' },
@@ -22,6 +23,9 @@ export default function App() {
   const [access, setAccess] = useState('');
   const [apiReady, setApiReady] = useState<boolean | null>(null);
   const [apiFrames, setApiFrames] = useState<number | null>(1);
+  const [saveGif, setSaveGif] = useState(true);
+  const [freshAI, setFreshAI] = useState(false);
+  const apiSession = useRef(new APISession());
   const [error, setError] = useState('');
   const [status, setStatus] = useState({ value: 0, message: '', detail: '' });
   const [split, setSplit] = useState(48);
@@ -101,7 +105,9 @@ export default function App() {
     setBusy(true); setError(''); setStatus({ value: 2, message: '이미지를 준비하고 있어요', detail: '' });
     try {
       worker.current ??= new Worker(new URL('./processor.worker.ts', import.meta.url), { type: 'module' });
-      worker.current.onmessage = ({ data }: MessageEvent<ProcessUpdate>) => {
+      const processor = worker.current;
+      worker.current.onmessage = ({ data }: MessageEvent<ProcessUpdate | APIRequest>) => {
+        if (data.type === 'api-request') { void apiSession.current.handle(processor, data); return; }
         if (data.type === 'progress') setStatus({ value: data.value, message: data.message, detail: data.detail ?? '' });
         if (data.type === 'error') {
           setError(data.message); setBusy(false); worker.current?.terminate(); worker.current = null;
@@ -115,7 +121,7 @@ export default function App() {
         setError('처리가 중단되었어요. 다른 탭을 닫거나 더 작은 파일로 다시 시도해 주세요.');
         setBusy(false); worker.current?.terminate(); worker.current = null;
       };
-      worker.current.postMessage({ file, quality, mode, access: mode === 'openai' ? access : undefined });
+      worker.current.postMessage({ file, quality, mode, access: mode === 'openai' ? access : undefined, saveGif, fresh: freshAI });
     } catch {
       setError('배경 제거를 시작하지 못했어요. 브라우저를 새로고침하고 다시 시도해 주세요.'); setBusy(false);
     }
@@ -181,7 +187,10 @@ export default function App() {
             {apiReady === false && <p>Vercel 환경변수에 <code>OPENAI_API_KEY</code>와 16자 이상의 <code>APP_PASSWORD</code>를 등록하고 다시 배포해 주세요. OpenAI 키는 이 화면에 입력하지 않아요.</p>}
             <label>개인용 비밀번호<input type="password" value={access} onChange={event => setAccess(event.target.value)} disabled={busy} autoComplete="off" placeholder="APP_PASSWORD에 설정한 비밀번호" /></label>
             <p>원본 이미지를 OpenAI로 전송해요. ChatGPT 구독과 별도로 API 사용료가 발생해요. 비밀번호는 이 탭을 닫거나 새로고침하면 사라져요.</p>
-            {file && <p className="api-cost">{apiFrames === null ? '호출 횟수 확인 중…' : `이번 배경 제거: API ${apiFrames}회 호출 예정`}{(apiFrames ?? 0) > 1 && ' · GIF는 프레임마다 처리해요.'}</p>}
+            {(apiFrames ?? 0) > 1 && <label className="api-option"><input type="checkbox" checked={saveGif} disabled={busy} onChange={event => setSaveGif(event.target.checked)} />GIF 절약 처리 · 비슷한 장면은 움직임을 따라 재사용</label>}
+            <label className="api-option"><input type="checkbox" checked={freshAI} disabled={busy} onChange={event => setFreshAI(event.target.checked)} />저장된 결과 대신 새로 분석 (추가 과금)</label>
+            {file && <p className="api-cost">{apiFrames === null ? '호출 횟수 확인 중…' : `이번 배경 제거: API 최대 ${apiFrames}회`}{(apiFrames ?? 0) > 1 && (saveGif ? ' · 확실히 추적되는 장면은 무료 재사용, 변화가 크면 추가 분석해요.' : ' · 모든 프레임을 개별 분석해요.')}</p>}
+            <p>같은 요청은 이 탭에 저장된 결과를 재사용해요. 새로고침하면 저장된 결과가 사라져요. 중간 품질은 그대로 유지해요.</p>
           </div>}
 
           <div className={`upload-card ${dragging ? 'dragging' : ''}`}
@@ -223,6 +232,7 @@ export default function App() {
           </div>
           <div className="preview-toolbar"><div className="swatches" aria-label="미리보기 배경색">{backgrounds.map((item) => <button key={item.name} className={`swatch ${item.color === 'transparent' ? 'checker' : ''} ${background === item.color ? 'chosen' : ''}`} style={item.color === 'transparent' ? {} : { background: item.color }} onClick={() => setBackground(item.color)} title={`${item.name} 미리보기`} aria-label={`${item.name} 배경으로 미리보기`} aria-pressed={background === item.color} />)}<span>미리보기 배경</span></div><button className="view-toggle" disabled={!canCompare} onClick={() => setView(view === 'compare' ? 'result' : 'compare')}><Layers2 size={14} />{view === 'compare' ? '결과만 보기' : '전후 비교'}</button></div>
           <div className="preview-bottom">{result ? <span><Check size={13} /> {result.width} × {result.height}px · {result.frames > 1 ? `${result.frames}프레임 · ` : ''}{(result.blob.size / 1024 / 1024).toFixed(2)}MB</span> : <span><MousePointer2 size={14} /> 슬라이더를 움직여 전후를 비교해 보세요</span>}<span>{result?.smoothUrl ? '부드러운 APNG 미리보기 · GIF도 저장 가능' : '다운로드는 투명하게'}</span></div>
+          {result?.apiStats && <p className="api-summary" role="status">배경 제거: 새 API {result.apiStats.calls}회 · 저장된 결과 {result.apiStats.cached}회 · 움직임 추적 {result.apiStats.tracked}프레임 재사용</p>}
           {result && <div className="repair-controls"><button onClick={() => { worker.current?.terminate(); worker.current = null; setEditing(true); }}><Brush size={15} />대략 표시해서 자동 보정</button></div>}
         </div>
       </section>
@@ -233,13 +243,13 @@ export default function App() {
 
       <section className="faq-section" id="faq"><div><span className="section-kicker">GOOD TO KNOW</span><h2>궁금한 점이 있나요?</h2><p>시작하기 전에 알아두면 좋아요.</p><ArrowDown size={22} /></div><div className="faq-list">
         <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. 사진·GIF 결과의 ‘대략 표시해서 자동 보정’은 칠한 선 전체를 반영해요. 윤곽이 열려 있어도 표시한 곳과 주변을 복원하고, 같은 곳을 다시 칠하면 더 넓게 보정해요. 적용 후 다시 열어도 이전 표시를 기억해요. 원치 않는 곳까지 반영되면 되돌리거나 반대 도구로 수정할 수 있어요. 사진 AI 결과도 같은 방식으로 수정할 수 있어요. GIF는 프레임을 골라 수정하거나 모든 프레임의 같은 위치에 적용할 수 있어요. 움직임 미리보기로 확인한 뒤 저장해 주세요.</p></details>
-        <details><summary>정말 무료인가요?<ChevronDown size={17} /></summary><p>캐릭터 보호와 사진 AI는 API 키 없이 무료로 사용해요. GPT AI는 서버에 설정한 OpenAI API 키로 호출하며 ChatGPT 구독과 별도로 과금돼요. GIF는 프레임마다 호출하므로 시작 전에 횟수를 확인해 주세요. Claude는 편집된 이미지를 직접 반환하지 않아 GPT 이미지 편집 API를 사용해요.</p></details>
+        <details><summary>정말 무료인가요?<ChevronDown size={17} /></summary><p>캐릭터 보호와 사진 AI는 API 키 없이 무료로 사용해요. GPT AI는 서버에 설정한 OpenAI API 키로 호출하며 ChatGPT 구독과 별도로 과금돼요. 여러 표시를 한 번에 보정하고 같은 요청은 이 탭에서 재사용해요. GIF 절약 처리는 확실히 맞는 이동만 추적하고 변화가 크면 새로 분석해요. 시작 전 최대 호출 수와 완료 후 새 API 요청 수를 확인해 주세요. Claude는 편집된 이미지를 직접 반환하지 않아 GPT 이미지 편집 API를 사용해요.</p></details>
         <details><summary>움짤도 움직인 채로 저장되나요?<ChevronDown size={17} /></summary><p>GIF의 각 프레임을 처리해 원본의 프레임 수, 재생 간격과 반복 설정을 유지해요. 최대 120프레임·20MB까지 지원해요. GIF는 최대 256색과 완전 투명만 지원하므로 가장자리가 거칠 수 있어요. 부드러운 경계가 필요하면 함께 제공되는 APNG를 저장해 주세요. 움직이는 PNG를 지원하는 브라우저·앱에서 재생되며, 지원하지 않는 앱에서는 정지 이미지로 보일 수 있어요. 움직이는 WebP와 PNG는 GIF로 변환해 주세요.</p></details>
         <details><summary>파일의 크기와 화질은 어떻게 되나요?<ChevronDown size={17} /></summary><p>빠르게 모드는 긴 변 기준 사진 최대 2,048px·GIF 768px, 꼼꼼하게 모드는 사진 4,096px·GIF 1,024px로 저장해요. 작은 이미지는 확대하지 않아요. 사진은 4,000만 화소, GIF는 프레임당 400만 화소까지 지원해요. 복잡한 배경이나 반투명 물체는 결과가 정확하지 않을 수 있어요.</p></details>
-        <details><summary>사진이 서버에 남지는 않나요?<ChevronDown size={17} /></summary><p>캐릭터 보호와 사진 AI는 이미지 파일을 외부 서버로 보내지 않아요. GPT AI와 GPT 영역 보정은 이미지를 Vercel 서버를 거쳐 OpenAI로 전송하며 OpenAI의 API 데이터 정책이 적용돼요. 이 앱은 원본·결과 파일이나 비밀번호를 별도로 저장하지 않아요. 페이지를 닫으면 작업 결과는 사라지므로 필요한 파일은 미리 다운로드해 주세요. 미리보기 배경색은 다운로드 파일에 포함되지 않아요.</p></details>
+        <details><summary>사진이 서버에 남지는 않나요?<ChevronDown size={17} /></summary><p>캐릭터 보호와 사진 AI는 이미지 파일을 외부 서버로 보내지 않아요. 새 GPT AI 요청은 원본·표시 이미지를 Vercel 서버를 거쳐 OpenAI로 전송하며 OpenAI의 API 데이터 정책이 적용돼요. 이 앱은 파일이나 비밀번호를 서버·디스크에 별도로 저장하지 않아요. 성공한 GPT 결과는 현재 탭 메모리에 잠시 보관해 같은 요청에 재사용해요. 페이지를 닫으면 작업 결과는 사라지므로 필요한 파일은 미리 다운로드해 주세요. 미리보기 배경색은 다운로드 파일에 포함되지 않아요.</p></details>
       </div></section>
     </main>
-    {editing && result && file && <MaskEditor original={file} result={result.blob} width={result.width} height={result.height} memory={result.repair} access={mode === 'openai' ? access : undefined} onApply={applyEdit} onClose={() => setEditing(false)} />}
+    {editing && result && file && <MaskEditor original={file} result={result.blob} width={result.width} height={result.height} memory={result.repair} access={mode === 'openai' ? access : undefined} apiSession={apiSession.current} onApply={applyEdit} onClose={() => setEditing(false)} />}
     <footer><a className="brand footer-brand" href="#">off<span className="brand-dot">.</span></a><span>조금 덜어내고, 더 자유롭게.</span><div><a href="https://github.com/BAEPPY/removebackground" target="_blank" rel="noreferrer">소스 코드</a><span>Made for your next idea.</span></div></footer>
   </>;
 }

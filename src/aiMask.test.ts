@@ -1,7 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { applyAIMask, rememberAIMask } from './aiMask';
+import { applyAIMask, rememberAIBatch, rememberAIMask } from './aiMask';
+import { pendingAIStrokes } from './repairHints';
 
 describe('AI alpha with original subject pixels', () => {
+  it('applies mixed marks together, lets later marks win and retains retryable history', () => {
+    const width = 100; const height = 60;
+    const source = new Uint8ClampedArray(width * height * 4).fill(255);
+    const mask = source.slice(); mask.fill(0, 0, width * 4);
+    const current = new Uint8ClampedArray(source.length);
+    const keep = { points: [{ x: 25, y: 30 }], radius: 2, mode: 'restore' as const };
+    const erase = { points: [{ x: 75, y: 30 }], radius: 2, mode: 'erase' as const };
+    const prior = current.slice(); prior.set([255, 255, 255, 255], (30 * width + 75) * 4);
+    const output = applyAIMask(source, mask, width, height, prior, [keep, erase]);
+    expect(output[(30 * width + 25) * 4 + 3]).toBe(255);
+    expect(output[(30 * width + 75) * 4 + 3]).toBe(0);
+    expect(output[(30 * width + 50) * 4 + 3]).toBe(0);
+    const opposite = applyAIMask(source, mask, width, height, prior, [keep, { ...keep, mode: 'erase' }]);
+    expect(opposite[(30 * width + 25) * 4 + 3]).toBe(0);
+    const state = { labels: new Int8Array(width * height), strokes: [keep, erase] };
+    const remembered = rememberAIBatch(prior, output, state, [keep, erase]);
+    expect(remembered.labels[30 * width + 25]).toBe(1); expect(remembered.labels[30 * width + 75]).toBe(-1);
+    expect(pendingAIStrokes(remembered)).toEqual([keep, erase]); // cached or fresh retry
+    const next = { ...keep, points: [{ x: 26, y: 30 }] };
+    expect(pendingAIStrokes({ ...remembered, strokes: [...remembered.strokes, next] })).toEqual([next]);
+    expect(state.labels.every(value => value === 0)).toBe(true);
+  });
   it('remembers AI changes on every targeted frame without mutating undo history', () => {
     const before = new Uint8ClampedArray([255, 255, 255, 0, 20, 20, 20, 255]);
     const after = before.slice(); after[3] = 255;

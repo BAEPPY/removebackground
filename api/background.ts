@@ -44,14 +44,16 @@ export default async function handler(req: Request, res: ServerResponse) {
   let form: FormData;
   try {
     const data = await body(req);
-    if (!data || !['remove', 'restore', 'erase'].includes(data.action) || !Array.isArray(data.images) || data.images.length !== (data.action === 'remove' ? 1 : 3)) throw new Error('request');
+    if (!data || !['remove', 'correct', 'restore', 'erase'].includes(data.action) || !Array.isArray(data.images) || data.images.length !== (data.action === 'remove' ? 1 : data.action === 'correct' ? 2 : 3)) throw new Error('request');
     const images = data.images.map(png);
     if (!images.every((image: { w: number }) => image.w === images[0].w)) throw new Error('dimensions');
     form = new FormData();
     for (let i = 0; i < images.length; i++) form.append('image[]', new Blob([images[i].bytes], { type: 'image/png' }), `reference-${i + 1}.png`);
     form.set('model', MODEL); form.set('background', 'transparent'); form.set('output_format', 'png');
     form.set('input_fidelity', 'high'); form.set('quality', 'medium'); form.set('size', '1024x1024'); form.set('n', '1');
-    const correction = data.action === 'remove' ? '' : ` Image 2 is the current cutout, image 3 is the original with a rough ${data.action === 'restore' ? 'green KEEP' : 'pink REMOVE'} mark. Use the mark as a semantic hint to ${data.action === 'restore' ? 'restore the original subject including white interior parts' : 'remove unwanted background'} near that mark, following real object contours even if open. Keep the other areas as in image 2. Do not include the colored annotation in the output.`;
+    const correction = data.action === 'remove' ? '' : data.action === 'correct'
+      ? ' Image 2 is image 1 annotated with multiple rough marks: green KEEP means restore or retain the original subject, including white interior parts; pink REMOVE means unwanted background. Honor ALL marks together, following real object contours even if open. Use image 1 for unmarked original details. Do not include the colored annotations in the output. Return a complete transparent cutout; the application will apply only the marked neighborhoods.'
+      : ` Image 2 is the current cutout, image 3 is the original with a rough ${data.action === 'restore' ? 'green KEEP' : 'pink REMOVE'} mark. Use the mark as a semantic hint to ${data.action === 'restore' ? 'restore the original subject including white interior parts' : 'remove unwanted background'} near that mark, following real object contours even if open. Keep the other areas as in image 2. Do not include the colored annotation in the output.`;
     form.set('prompt', PROMPT + correction);
   } catch (error) { reply(res, error instanceof Error && error.message === 'size' ? 413 : 400, '이미지 요청을 읽지 못했어요. 파일을 다시 선택해 주세요.'); return; }
   const abort = new AbortController();

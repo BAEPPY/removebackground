@@ -2,12 +2,13 @@ import { GIFEncoder } from 'gifenc';
 import { GifFrames } from './gifFrames';
 import { transparentPalette } from './media';
 import { analyzeRepair, smartRepair } from './smartRepair';
-import { emptyRepairState, type RepairMemory } from './repairHints';
+import { emptyRepairState, pendingAIStrokes, repairMemory, type RepairMemory } from './repairHints';
 import { refineEdges } from './edgeMatte';
 import type { GifRepairMemory, RepairRequest, RepairUpdate } from './repairProtocol';
 import { openAICutout } from './apiImage';
 import { AnimatedPng } from './apng';
-import { rememberAIMask } from './aiMask';
+import { rememberAIBatch } from './aiMask';
+import { apiStats, resetAPIStats } from './apiWorker';
 
 let original: GifFrames;
 let result: GifFrames;
@@ -36,7 +37,8 @@ async function editedPixels(index: number) {
 }
 async function frame(message: string) {
   const source = original.read(selected);
-  send({ type: 'frame', frame: selected, frames: original.frames.length, original: await png(source), blob: await png(await clean(selected, source)), canUndo: !!previous, message });
+  const memory = memories[selected];
+  send({ type: 'frame', frame: selected, frames: original.frames.length, original: await png(source), blob: await png(await clean(selected, source)), canUndo: !!previous, message, pendingMarks: memory ? pendingAIStrokes(memory).length : 0 });
 }
 async function clean(index: number, source: Uint8ClampedArray<ArrayBuffer>) {
   const memory = memories[index];
@@ -83,8 +85,9 @@ async function handle(data: RepairRequest) {
     await frame('마지막 보정을 되돌렸어요.'); return;
   }
   if (data.type !== 'stroke' && data.type !== 'ai') return;
-  const hint = data.type === 'ai' ? memories[selected]?.strokes.at(-1) : data.stroke;
-  if (!hint) throw new Error('먼저 이 프레임에서 남길 부분이나 지울 부분을 표시해 주세요.');
+  const hints = data.type === 'ai' ? pendingAIStrokes(memories[selected] ?? { strokes: [] }) : [data.stroke];
+  if (!hints.length) throw new Error('먼저 이 프레임에서 남길 부분이나 지울 부분을 표시해 주세요.');
+  resetAPIStats();
   // Commit a multi-frame stroke atomically; cancellation terminates the worker.
   const nextEdits = new Map(edits); const nextMemories = { ...memories };
   const targets = data.scope === 'all' ? original.frames.map((_, i) => i) : [selected];
@@ -93,24 +96,27 @@ async function handle(data: RepairRequest) {
     send({ type: 'progress', message: `${data.type === 'ai' ? 'GPT로 영역을 보정하고 있어요' : '선택 영역을 보정하고 있어요'} · ${index + 1} / ${original.frames.length} 프레임` });
     const source = original.read(index);
     const memory = memories[index];
-    const state = memory ? { labels: new Int8Array(await memory.labels.arrayBuffer()), strokes: memory.strokes } : emptyRepairState(width, height);
+    const state = memory ? { ...memory, labels: new Int8Array(await memory.labels.arrayBuffer()) } : emptyRepairState(width, height);
     if (state.labels.length !== width * height) throw new Error('보정 이력을 읽지 못했어요.');
     const current = await editedPixels(index);
     if (data.type === 'ai') {
-      const output = await openAICutout(source, width, height, access, current, hint);
+      // Preserve pending marks made on other frames too. Identical all-frame
+      // hints are deduplicated, while order preserves the latest intent.
+      const frameHints = index === selected ? hints : [...state.strokes.slice(state.aiApplied ?? 0).filter(h => !hints.some(hint => JSON.stringify(hint) === JSON.stringify(h))), ...hints];
+      const output = await openAICutout(source, width, height, access, current, frameHints, data.fresh);
       nextEdits.set(index, await png(output));
-      const remembered = rememberAIMask(current, output, state, hint);
-      nextMemories[index] = { labels: new Blob([remembered.labels]), strokes: remembered.strokes };
+      const remembered = rememberAIBatch(current, output, state, frameHints);
+      nextMemories[index] = repairMemory(remembered);
       message = 'GPT 영역 보정을 적용했어요. 움직임을 확인하거나 되돌릴 수 있어요.';
       continue;
     }
-    const repaired = smartRepair(source, current, width, height, hint, analyzeRepair(source, width, height), state);
+    const repaired = smartRepair(source, current, width, height, hints[0], analyzeRepair(source, width, height), state);
     nextEdits.set(index, await png(repaired.pixels));
-    nextMemories[index] = { labels: new Blob([repaired.state.labels]), strokes: repaired.state.strokes };
+    nextMemories[index] = repairMemory(repaired.state);
     message = repaired.message;
   }
   previous = { edits, memories }; edits = nextEdits; memories = nextMemories;
-  await frame(data.scope === 'all' ? `모든 ${targets.length}프레임의 같은 위치를 보정했어요. 움직임을 확인해 주세요.` : message);
+  await frame(data.type === 'ai' ? `${data.scope === 'all' ? `모든 ${targets.length}프레임 · ` : ''}GPT 영역 보정을 적용했어요 · 새 API ${apiStats.calls}회 · 저장된 결과 ${apiStats.cached}회 재사용` : data.scope === 'all' ? `모든 ${targets.length}프레임의 같은 위치를 보정했어요. 움직임을 확인해 주세요.` : message);
 }
 
 // Serialize decode/encode operations even if messages arrive during an await.

@@ -7,6 +7,9 @@ import { removeCharacterBackground } from './character';
 import { refineEdges } from './edgeMatte';
 import { openAICutout } from './apiImage';
 import { AnimatedPng } from './apng';
+import { apiStats, resetAPIStats } from './apiWorker';
+import { KEYFRAME_INTERVAL, trackMask } from './maskTracking';
+import type { APIResponse } from './apiSession';
 
 const send = (update: ProcessUpdate) => self.postMessage(update);
 const progress = (value: number, message: string, detail?: string) => send({ type: 'progress', value, message, detail });
@@ -17,7 +20,8 @@ function canvas(width: number, height: number) {
   return { surface, context };
 }
 
-async function processFile({ file, quality, mode, access }: ProcessRequest) {
+async function processFile({ file, quality, mode, access, saveGif = true, fresh = false }: ProcessRequest) {
+  resetAPIStats();
   const invalid = validateFile(file);
   if (invalid) throw new Error(invalid);
   const data = await file.arrayBuffer();
@@ -72,7 +76,7 @@ async function processFile({ file, quality, mode, access }: ProcessRequest) {
       outputPixels = new ImageData(removeCharacterBackground(originalPixels.data, width, height), width, height);
     } else if (mode === 'openai') {
       progress(25, 'GPT가 배경과 주인공을 구분하고 있어요', '원본을 OpenAI로 전송해요 · 보통 수십 초 이상 걸릴 수 있어요');
-      outputPixels = new ImageData(await openAICutout(originalPixels.data, width, height, access ?? ''), width, height);
+      outputPixels = new ImageData(await openAICutout(originalPixels.data, width, height, access ?? '', undefined, [], fresh), width, height);
     } else {
       const cutout = await createImageBitmap(await removePhoto(surface));
       context.clearRect(0, 0, width, height);
@@ -83,7 +87,7 @@ async function processFile({ file, quality, mode, access }: ProcessRequest) {
     }
     context.putImageData(new ImageData(refineEdges(originalPixels.data, outputPixels.data, width, height), width, height), 0, 0);
     const blob = await surface.convertToBlob({ type: 'image/png' });
-    send({ type: 'done', blob, width, height, frames: 1 });
+    send({ type: 'done', blob, width, height, frames: 1, apiStats: mode === 'openai' ? apiStats : undefined });
     return;
   }
   progress(3, '움짤의 프레임을 확인하고 있어요');
@@ -105,6 +109,7 @@ async function processFile({ file, quality, mode, access }: ProcessRequest) {
   const repeat = readRepeat(gif);
   const smooth = new AnimatedPng(frames.length, repeat);
   const images: Record<number, Blob> = {};
+  let keyframe: { source: Uint8ClampedArray; mask: Uint8ClampedArray; index: number } | undefined;
   for (const rawFrame of frames) {
     const frame = decompressFrame(rawFrame, gif.gct, true);
     const pixels = compose(frame);
@@ -117,8 +122,13 @@ async function processFile({ file, quality, mode, access }: ProcessRequest) {
     if (mode === 'character') {
       outputPixels = removeCharacterBackground(originalPixels.data, width, height);
     } else if (mode === 'openai') {
-      progress(12 + frameNumber / frames.length * 84, 'GPT가 움짤의 배경을 지우고 있어요', `${frameNumber + 1} / ${frames.length} 프레임 · 프레임마다 API를 호출해요`);
-      outputPixels = await openAICutout(originalPixels.data, width, height, access ?? '');
+      const tracked = saveGif && keyframe && frameNumber - keyframe.index < KEYFRAME_INTERVAL ? trackMask(keyframe.source, keyframe.mask, originalPixels.data, width, height) : null;
+      if (tracked) { outputPixels = tracked.pixels; apiStats.tracked++; }
+      else {
+        progress(12 + frameNumber / frames.length * 84, 'GPT가 새 장면을 분석하고 있어요', `${frameNumber + 1} / ${frames.length} 프레임 · 새 API ${apiStats.calls}회 · 재사용 ${apiStats.cached + apiStats.tracked}프레임`);
+        outputPixels = await openAICutout(originalPixels.data, width, height, access ?? '', undefined, [], fresh);
+        keyframe = { source: originalPixels.data, mask: outputPixels, index: frameNumber };
+      }
     } else {
       const bitmap = await createImageBitmap(await removePhoto(output.surface));
       output.context.clearRect(0, 0, width, height);
@@ -141,10 +151,11 @@ async function processFile({ file, quality, mode, access }: ProcessRequest) {
   }
   progress(98, '투명한 GIF로 저장하고 있어요');
   encoder.finish();
-  send({ type: 'done', blob: new Blob([encoder.bytes()], { type: 'image/gif' }), smoothBlob: smooth.finish(), repair: { kind: 'gif', frames: {}, images }, width, height, frames: frames.length });
+  send({ type: 'done', blob: new Blob([encoder.bytes()], { type: 'image/gif' }), smoothBlob: smooth.finish(), repair: { kind: 'gif', frames: {}, images }, width, height, frames: frames.length, apiStats: mode === 'openai' ? apiStats : undefined });
 }
 
-self.onmessage = async ({ data }: MessageEvent<ProcessRequest>) => {
+self.onmessage = async ({ data }: MessageEvent<ProcessRequest | APIResponse>) => {
+  if ('type' in data) return; // API replies are handled by apiWorker's listener.
   try { await processFile(data); }
   catch (error) {
     const message = error instanceof Error ? error.message : '';

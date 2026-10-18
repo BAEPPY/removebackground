@@ -98,5 +98,5 @@ export function smartRepair(original: Uint8ClampedArray, current: Uint8ClampedAr
     ? `${stroke.mode === 'restore' ? '복원' : '지우기'} 표시 전체와 주변을 ${state.strokes.length ? '다시 ' : ''}보정했어요. 더 표시하면 이어서 반영해요.`
     : !sourceExists && sign === 1 ? '표시한 곳은 원본부터 투명해서 복원할 색이 없어요. 원본 색이 있는 부분까지 이어서 표시해 주세요.'
     : '주변까지 다시 계산했지만 바뀐 투명도는 없어요. 표시는 기억하고 다음 보정에서 범위를 더 넓혀요.';
-  return { pixels, changed, regions, state: { labels, strokes: [...state.strokes, stroke] }, message };
+  return { pixels, changed, regions, state: { ...state, labels, strokes: [...state.strokes, stroke] }, message };
 }

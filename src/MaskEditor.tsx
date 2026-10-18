@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { Brush, Eraser, Eye, LoaderCircle, Play, Square, Undo2, X } from 'lucide-react';
 import type { BrushMode, Point } from './character';
 import type { EditorMemory, RepairRequest, RepairUpdate } from './repairProtocol';
+import type { APISession, APIRequest } from './apiSession';
+import { pendingAIStrokes } from './repairHints';
 
-type Props = { original: Blob; result: Blob; width: number; height: number; memory?: EditorMemory; access?: string; onApply: (blob: Blob, memory?: EditorMemory, smoothBlob?: Blob) => void; onClose: () => void };
+type Props = { original: Blob; result: Blob; width: number; height: number; memory?: EditorMemory; access?: string; apiSession: APISession; onApply: (blob: Blob, memory?: EditorMemory, smoothBlob?: Blob) => void; onClose: () => void };
 
-export default function MaskEditor({ original, result, width, height, memory, access, onApply, onClose }: Props) {
+export default function MaskEditor({ original, result, width, height, memory, access, apiSession, onApply, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const worker = useRef<Worker | null>(null);
@@ -33,6 +35,8 @@ export default function MaskEditor({ original, result, width, height, memory, ac
   const [scope, setScope] = useState<'frame' | 'all'>('frame');
   const [sourceVisible, setSourceVisible] = useState(false);
   const [playing, setPlaying] = useState('');
+  const [freshAI, setFreshAI] = useState(false);
+  const [marks, setMarks] = useState(memory && !('kind' in memory) ? pendingAIStrokes(memory).length : 0);
 
   function redraw() {
     const context = canvas.current?.getContext('2d');
@@ -54,8 +58,9 @@ export default function MaskEditor({ original, result, width, height, memory, ac
     worker.current = processor;
     const fail = () => { if (active) { pending.current = false; setBusy(false); setError('편집을 준비하지 못했어요. 닫고 다시 시도해 주세요.'); } };
     processor.onerror = fail;
-    processor.onmessage = async ({ data }: MessageEvent<RepairUpdate>) => {
+    processor.onmessage = async ({ data }: MessageEvent<RepairUpdate | APIRequest>) => {
       if (!active) return;
+      if (data.type === 'api-request') { void apiSession.handle(processor, data); return; }
       if (data.type === 'ready') { setReady(true); setMessage('남길 부분이나 지울 부분 안쪽을 한 번 누르거나 대략 그어 주세요.'); return; }
       if (data.type === 'progress') { setMessage(data.message); return; }
       if (data.type === 'error') { pending.current = false; setBusy(false); setError(data.message); return; }
@@ -74,8 +79,10 @@ export default function MaskEditor({ original, result, width, height, memory, ac
           if (!active) { source.close(); return; }
           sourceBitmap.current?.close(); sourceBitmap.current = source;
           setFrame(data.frame); setFrames(data.frames); setReady(true);
+          setMarks(data.pendingMarks ?? 0);
         } else {
           output.current = data.blob; outputMemory.current = data.memory;
+          setMarks(pendingAIStrokes(data.memory).length);
         }
         redraw();
         setCanUndo(data.canUndo); setMessage(data.message);
@@ -94,7 +101,7 @@ export default function MaskEditor({ original, result, width, height, memory, ac
     }
     void initialize().catch(fail);
     return () => { active = false; processor.terminate(); worker.current = null; bitmap.current?.close(); bitmap.current = null; sourceBitmap.current?.close(); sourceBitmap.current = null; if (previewUrl.current) URL.revokeObjectURL(previewUrl.current); };
-  }, [original, result, width, height, memory, access]);
+  }, [original, result, width, height, memory, access, apiSession]);
 
   function drawHint(event: PointerEvent<HTMLCanvasElement>, start: boolean) {
     if (!ready || pending.current || playing || !canvas.current) return;
@@ -164,7 +171,7 @@ export default function MaskEditor({ original, result, width, height, memory, ac
     <div className="editor-view-tools"><button aria-pressed={sourceVisible} disabled={locked} onClick={() => { showOriginal.current = !showOriginal.current; setSourceVisible(showOriginal.current); redraw(); }}><Eye size={15} />{sourceVisible ? '보정 결과 보기' : '원본 보며 표시'}</button>{animated && <button disabled={busy || drawing || !ready} onClick={() => { if (playing) setPlaying(''); else request({ type: 'preview' }); }}>{playing ? <Square size={14} /> : <Play size={14} />}{playing ? '편집으로 돌아가기' : '움직임 미리보기'}</button>}</div>
     <div className="editor-canvas-wrap checker" aria-busy={!ready || busy}><canvas ref={canvas} width={width} height={height} style={{ width: `min(100%, ${width / height * 44}vh)`, display: playing ? 'none' : undefined }} aria-label="남기거나 지울 영역을 대략 표시할 이미지" onPointerDown={(event) => drawHint(event, true)} onPointerMove={(event) => drawHint(event, false)} onPointerUp={(event) => endStroke(event)} onPointerCancel={(event) => endStroke(event, true)} onLostPointerCapture={(event) => endStroke(event, true)} />{playing && <img src={playing} alt="영역 보정한 GIF 움직임 미리보기" style={{ width: `min(100%, ${width / height * 44}vh)` }} />}{(!ready || busy) && <div className="editor-busy"><LoaderCircle size={20} className="spin" /><span>{ready ? '보정 결과를 준비하는 중' : '윤곽을 살펴보는 중'}</span></div>}</div>
     <p className="editor-help" role="status">{message}</p>
-    {access && <div className="editor-ai"><button disabled={locked} onClick={() => request({ type: 'ai', scope })}>표시한 곳 GPT로 보정</button><p>먼저 남길 곳·지울 곳을 표시해 주세요. 마지막 표시와 주변 윤곽을 GPT로 다시 계산해요. 원본·현재 결과·표시 이미지를 OpenAI로 전송하며, 이 버튼을 누르면 API {animated && scope === 'all' ? frames : 1}회 호출이 발생해요.</p></div>}
+    {access && <div className="editor-ai"><button disabled={locked || !marks} onClick={() => request({ type: 'ai', scope, fresh: freshAI })}>표시한 곳 GPT로 보정</button><p>GPT 보정 대상 표시 {marks}개 · 남길 곳과 지울 곳을 여러 군데 표시한 뒤 한 번에 보정하세요. 원본·표시 이미지 2장을 보내요. API 최대 {animated && scope === 'all' ? frames : 1}회, 같은 요청은 저장된 결과를 재사용해요.</p><label className="api-option"><input type="checkbox" checked={freshAI} disabled={locked} onChange={event => setFreshAI(event.target.checked)} />결과가 부족하면 새로 분석 (추가 과금)</label></div>}
     <p className="editor-tip">선이 끊겨 있어도 표시한 부분을 복원해요. 남은 부분까지 이어서 칠하거나 같은 곳을 다시 표시해 주세요. 잘못 반영된 보정은 되돌릴 수 있어요.</p>
     {error && <p role="alert" className="error-message">{error}</p>}
     <div className="editor-actions"><button className="editor-cancel" onClick={onClose}>취소</button><button className="primary" onClick={apply} disabled={!ready || busy || drawing}>편집 적용</button></div>
