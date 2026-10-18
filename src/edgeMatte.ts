@@ -1,15 +1,16 @@
 import { solidBackdrop } from './character';
+import { tidyContour } from './contour';
 
 // Recover foreground color from C = alpha * F + (1 - alpha) * background.
 // Only a narrow band bordering transparent pixels is eligible. In particular,
 // white fur and other pixels indistinguishable from the backdrop are NOT erased.
-export function refineEdges(original: Uint8ClampedArray, mask: Uint8ClampedArray, width: number, height: number) {
+export function refineEdges(original: Uint8ClampedArray, mask: Uint8ClampedArray, width: number, height: number, protectedPixels?: Int8Array) {
   if (width < 1 || height < 1 || original.length !== width * height * 4 || mask.length !== original.length) throw new Error('이미지 크기가 맞지 않아요.');
   const output = mask.slice();
   const background = solidBackdrop(original, width, height);
   for (let i = 0; i < width * height; i++) if (!output[i * 4 + 3]) output.fill(0, i * 4, i * 4 + 4);
   // Existing transparent artwork has no known baked-in matte to remove.
-  if (!background) return output;
+  if (!background) return tidyContour(original, output, width, height, protectedPixels);
 
   const band = 3;
   const count = width * height;
@@ -72,5 +73,5 @@ export function refineEdges(original: Uint8ClampedArray, mask: Uint8ClampedArray
     output[p + 3] = Math.min(mask[p + 3], Math.round(coverage * original[p + 3]));
     for (let c = 0; c < 3; c++) output[p + c] = Math.max(0, Math.min(255, Math.round(background[c] + (original[p + c] - background[c]) / coverage)));
   }
-  return output;
+  return tidyContour(original, output, width, height, protectedPixels);
 }

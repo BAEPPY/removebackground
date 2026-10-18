@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import gifenc from 'gifenc';
+import { readFile } from 'node:fs/promises';
 import gifuct from 'gifuct-js';
 
 const { GIFEncoder, quantize, applyPalette } = gifenc;
@@ -131,10 +132,10 @@ test('real GIF processing protects moving white interiors in every frame', async
   await page.locator('input[type=file]').setInputFiles({ name: 'white-character.gif', mimeType: 'image/gif', buffer: Buffer.from(encoder.bytes()) });
   await page.getByRole('button', { name: '배경 지우기', exact: true }).click();
   await expect(page.getByRole('button', { name: '투명 GIF 다운로드' })).toBeVisible();
-  const bytes = await page.evaluate(async () => {
-    const url = document.querySelector<HTMLImageElement>('img[alt="배경을 제거한 결과"]')!.src;
-    return [...new Uint8Array(await (await fetch(url)).arrayBuffer())];
-  });
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '투명 GIF 다운로드' }).click();
+  await (await download).saveAs('artifacts/moving-white.gif');
+  const bytes = await readFile('artifacts/moving-white.gif');
   const gif = parseGIF(new Uint8Array(bytes).buffer);
   const frames = decompressFrames(gif, true);
   expect(frames).toHaveLength(2);

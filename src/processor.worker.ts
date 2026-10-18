@@ -5,6 +5,8 @@ import { createCompositor, fitSize, MAX_FRAMES, preserveAlpha, readRepeat, trans
 import type { ProcessRequest, ProcessUpdate } from './types';
 import { removeCharacterBackground } from './character';
 import { refineEdges } from './edgeMatte';
+import { openAICutout } from './apiImage';
+import { AnimatedPng } from './apng';
 
 const send = (update: ProcessUpdate) => self.postMessage(update);
 const progress = (value: number, message: string, detail?: string) => send({ type: 'progress', value, message, detail });
@@ -15,7 +17,7 @@ function canvas(width: number, height: number) {
   return { surface, context };
 }
 
-async function processFile({ file, quality, mode }: ProcessRequest) {
+async function processFile({ file, quality, mode, access }: ProcessRequest) {
   const invalid = validateFile(file);
   if (invalid) throw new Error(invalid);
   const data = await file.arrayBuffer();
@@ -68,6 +70,9 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
     let outputPixels: ImageData;
     if (mode === 'character') {
       outputPixels = new ImageData(removeCharacterBackground(originalPixels.data, width, height), width, height);
+    } else if (mode === 'openai') {
+      progress(25, 'GPT가 배경과 주인공을 구분하고 있어요', '원본을 OpenAI로 전송해요 · 보통 수십 초 이상 걸릴 수 있어요');
+      outputPixels = new ImageData(await openAICutout(originalPixels.data, width, height, access ?? ''), width, height);
     } else {
       const cutout = await createImageBitmap(await removePhoto(surface));
       context.clearRect(0, 0, width, height);
@@ -98,6 +103,8 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
   const output = canvas(width, height);
   const encoder = GIFEncoder();
   const repeat = readRepeat(gif);
+  const smooth = new AnimatedPng(frames.length, repeat);
+  const images: Record<number, Blob> = {};
   for (const rawFrame of frames) {
     const frame = decompressFrame(rawFrame, gif.gct, true);
     const pixels = compose(frame);
@@ -109,6 +116,9 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
     let outputPixels: Uint8ClampedArray;
     if (mode === 'character') {
       outputPixels = removeCharacterBackground(originalPixels.data, width, height);
+    } else if (mode === 'openai') {
+      progress(12 + frameNumber / frames.length * 84, 'GPT가 움짤의 배경을 지우고 있어요', `${frameNumber + 1} / ${frames.length} 프레임 · 프레임마다 API를 호출해요`);
+      outputPixels = await openAICutout(originalPixels.data, width, height, access ?? '');
     } else {
       const bitmap = await createImageBitmap(await removePhoto(output.surface));
       output.context.clearRect(0, 0, width, height);
@@ -117,7 +127,11 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
       outputPixels = output.context.getImageData(0, 0, width, height).data;
       preserveAlpha(outputPixels, originalPixels.data);
     }
-    const { palette, indices } = transparentPalette(refineEdges(originalPixels.data, outputPixels, width, height));
+    const cleaned = refineEdges(originalPixels.data, outputPixels, width, height);
+    output.context.putImageData(new ImageData(cleaned, width, height), 0, 0);
+    images[frameNumber] = await output.surface.convertToBlob({ type: 'image/png' });
+    await smooth.add(images[frameNumber], rawFrame.gce ? rawFrame.gce.delay * 10 : 100);
+    const { palette, indices } = transparentPalette(cleaned);
     encoder.writeFrame(indices, width, height, {
       palette, transparent: true, transparentIndex: 0, dispose: 2,
       // gifuct defaults zero delays to 100ms, so use the original centiseconds.
@@ -127,7 +141,7 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
   }
   progress(98, '투명한 GIF로 저장하고 있어요');
   encoder.finish();
-  send({ type: 'done', blob: new Blob([encoder.bytes()], { type: 'image/gif' }), width, height, frames: frames.length });
+  send({ type: 'done', blob: new Blob([encoder.bytes()], { type: 'image/gif' }), smoothBlob: smooth.finish(), repair: { kind: 'gif', frames: {}, images }, width, height, frames: frames.length });
 }
 
 self.onmessage = async ({ data }: MessageEvent<ProcessRequest>) => {
