@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { paintMask, removeCharacterBackground } from './character';
+import { removeCharacterBackground } from './character';
 
 function drawing() {
   const width = 64; const height = 64;
@@ -85,25 +85,5 @@ describe('outline-aware character protection', () => {
     const pixels = new Uint8ClampedArray(40 * 40 * 4);
     for (let i = 0; i < 1600; i++) pixels.set(i % 40 < 20 ? [220, 40, 40, 255] : [40, 100, 220, 255], i * 4);
     expect(() => removeCharacterBackground(pixels, 40, 40)).toThrow(/사진 AI/);
-  });
-});
-
-describe('manual mask repair', () => {
-  it('restores original colors and soft alpha only along the painted segment', () => {
-    const image = drawing();
-    image.pixel(31, 31, [255, 250, 245, 100]);
-    const output = image.pixels.slice();
-    for (let i = 3; i < output.length; i += 4) output[i] = 0;
-    paintMask(output, image.pixels, 64, 64, { x: 28, y: 31 }, { x: 34, y: 31 }, 2, 'restore');
-    expect(rgba(output, 64, 31, 31)).toEqual([255, 250, 245, 100]);
-    expect(rgba(output, 64, 28, 31)[3]).toBe(255);
-    expect(rgba(output, 64, 31, 40)[3]).toBe(0);
-  });
-  it('can erase an enclosed background without erasing nearby facial details', () => {
-    const image = drawing();
-    const output = image.pixels.slice();
-    paintMask(output, image.pixels, 64, 64, { x: 16, y: 40 }, { x: 16, y: 40 }, 2, 'erase');
-    expect(rgba(output, 64, 16, 40)[3]).toBe(0);
-    expect(rgba(output, 64, 30, 39)[3]).toBe(255);
   });
 });

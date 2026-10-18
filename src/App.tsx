@@ -170,7 +170,7 @@ export default function App() {
           </div>
           {error && <div className="error-message" role="alert">{error}<button onClick={() => setError('')} aria-label="오류 메시지 닫기"><X size={15} /></button></div>}
           <div className="upload-meta"><span><ShieldCheck size={14} /> 파일은 서버에 저장되지 않아요</span><label className="quality-select">처리 모드<select value={quality} onChange={(event) => { setQuality(event.target.value as Quality); if (result) { setResult(null); setStatus({ value: 0, message: '', detail: '' }); } }} disabled={busy}><option value="fast">빠르게</option><option value="detail">꼼꼼하게</option></select><ChevronDown size={12} /></label></div>
-          <p className="model-note">{mode === 'character' ? '선이 크게 끊긴 부분은 결과에서 ‘지워진 부분 복원’으로 다듬어 주세요.' : '첫 사용 시 AI 모델 다운로드가 필요해요. 기기에 따라 처리 시간이 달라요.'}</p>
+          <p className="model-note">{mode === 'character' ? '결과가 아쉬우면 ‘대략 표시해서 자동 보정’에서 남길 부분과 지울 부분을 알려 주세요.' : '첫 사용 시 AI 모델 다운로드가 필요해요. 기기에 따라 처리 시간이 달라요.'}</p>
           {!file && <div className="sample-row"><span>이미지가 없다면?</span><button className="sample-button" onClick={loadSample} disabled={sampleLoading}><img src="/sample.svg" alt="해바라기 일러스트 예시" />{sampleLoading ? '불러오는 중…' : '예시로 시작하기'}<ArrowRight size={14} /></button></div>}
         </div>
 
@@ -179,7 +179,7 @@ export default function App() {
           <div className={`preview checker ${isDemo ? 'demo' : ''} ${busy ? 'is-processing' : ''}`} style={previewStyle}>
             {canCompare ? <>
               <img className="preview-image" src={outputSrc} alt={isDemo ? '투명 배경의 해바라기 일러스트' : '배경을 제거한 결과'} />
-              {view === 'compare' && <><div className={`before-layer ${isDemo ? 'sample-before' : ''}`} style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}><img className="preview-image" src={isDemo ? '/sample.svg' : original} alt="배경 제거 전 원본" /></div><div className="divider" style={{ left: `${split}%` }}><span><MoveHorizontal size={21} /></span></div><input className="compare-range" type="range" min="0" max="100" value={split} onChange={(event) => setSplit(Number(event.target.value))} aria-label="배경 제거 전후 비교 위치" /></>}
+              {view === 'compare' && <><div className={`before-layer ${isDemo ? 'sample-before' : 'source-checker'}`} style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}><img className="preview-image" src={isDemo ? '/sample.svg' : original} alt="배경 제거 전 원본" /></div><div className="divider" style={{ left: `${split}%` }}><span><MoveHorizontal size={21} /></span></div><input className="compare-range" type="range" min="0" max="100" value={split} onChange={(event) => setSplit(Number(event.target.value))} aria-label="배경 제거 전후 비교 위치" /></>}
               <div className="preview-labels">{view === 'compare' && <span>원본</span>}<span className="after-label"><Sparkles size={12} /> 배경 제거</span></div>
             </> : <img className="preview-image" src={original} alt="선택한 원본 이미지" />}
             {busy && <div className="scan-line" />}
@@ -188,7 +188,7 @@ export default function App() {
           </div>
           <div className="preview-toolbar"><div className="swatches" aria-label="미리보기 배경색">{backgrounds.map((item) => <button key={item.name} className={`swatch ${item.color === 'transparent' ? 'checker' : ''} ${background === item.color ? 'chosen' : ''}`} style={item.color === 'transparent' ? {} : { background: item.color }} onClick={() => setBackground(item.color)} title={`${item.name} 미리보기`} aria-label={`${item.name} 배경으로 미리보기`} aria-pressed={background === item.color} />)}<span>미리보기 배경</span></div><button className="view-toggle" disabled={!canCompare} onClick={() => setView(view === 'compare' ? 'result' : 'compare')}><Layers2 size={14} />{view === 'compare' ? '결과만 보기' : '전후 비교'}</button></div>
           <div className="preview-bottom">{result ? <span><Check size={13} /> {result.width} × {result.height}px · {result.frames > 1 ? `${result.frames}프레임 · ` : ''}{(result.blob.size / 1024 / 1024).toFixed(2)}MB</span> : <span><MousePointer2 size={14} /> 슬라이더를 움직여 전후를 비교해 보세요</span>}<span>다운로드는 투명하게</span></div>
-          {result && <div className="repair-controls">{result.blob.type === 'image/png' ? <button onClick={() => { worker.current?.terminate(); worker.current = null; setEditing(true); }}><Brush size={15} />지워진 부분 복원 / 직접 지우기</button> : <p>캐릭터 보호는 GIF의 모든 프레임에 적용돼요. 브러시 편집은 PNG에서 지원해요.</p>}</div>}
+          {result && <div className="repair-controls">{result.blob.type === 'image/png' ? <button onClick={() => { worker.current?.terminate(); worker.current = null; setEditing(true); }}><Brush size={15} />대략 표시해서 자동 보정</button> : <p>캐릭터 보호는 GIF의 모든 프레임에 적용돼요. 영역 보정은 PNG에서 지원해요.</p>}</div>}
         </div>
       </section>
 
@@ -197,7 +197,7 @@ export default function App() {
       <section className="how-section" id="how"><div className="section-heading"><span className="section-kicker">HOW IT WORKS</span><h2>세 번이면 충분해요.</h2><p>덜어내는 과정도, 가벼워야 하니까.</p></div><div className="steps"><div><span>01</span><h3>이미지 가져오기</h3><p>사진이나 GIF를 선택하거나<br />이 페이지에 끌어다 놓으세요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>02</span><h3>배경 지우기</h3><p>캐릭터 보호 또는 사진 AI를 골라요.<br />필요한 부분은 복원으로 다듬어요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>03</span><h3>자유롭게 사용하기</h3><p>투명한 PNG 또는 GIF로 저장해<br />원하는 곳에 활용하세요.</p></div></div></section>
 
       <section className="faq-section" id="faq"><div><span className="section-kicker">GOOD TO KNOW</span><h2>궁금한 점이 있나요?</h2><p>시작하기 전에 알아두면 좋아요.</p><ArrowDown size={22} /></div><div className="faq-list">
-        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 짧게 끊긴 선은 보완하지만, 크게 열린 윤곽이나 팔다리 사이의 닫힌 배경은 자동 구분이 어려울 수 있어요. PNG 결과의 ‘지워진 부분 복원 / 직접 지우기’에서 원본으로 복원하거나 남은 배경을 지울 수 있어요. GIF에는 캐릭터 보호가 프레임마다 적용되며 브러시 편집은 지원하지 않아요.</p></details>
+        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. PNG 결과의 ‘대략 표시해서 자동 보정’에서 얼굴 안쪽을 대략 표시하면 같은 윤곽 안의 원본 색을 복원하고, 바깥 배경을 표시하면 이어진 잔여 배경을 정리해요. 크게 열린 윤곽이나 복잡한 사진에서는 영역 선택이 다를 수 있어 되돌리기로 확인해 주세요. GIF에는 캐릭터 보호가 프레임마다 적용되며 영역 보정은 PNG에서 지원해요.</p></details>
         <details><summary>정말 무료인가요?<ChevronDown size={17} /></summary><p>네. 회원가입이나 API 키 없이 사용할 수 있어요. 배경 제거는 내 기기의 연산으로 진행돼요. 캐릭터 보호는 모델 다운로드 없이 작동하고, 사진 AI는 처음에 AI 모델과 실행 파일을 다운로드해요.</p></details>
         <details><summary>움짤도 움직인 채로 저장되나요?<ChevronDown size={17} /></summary><p>GIF의 각 프레임을 처리해 원본의 프레임 수, 재생 간격과 반복 설정을 유지해요. 최대 120프레임·20MB까지 지원해요. GIF는 최대 256색과 완전 투명만 지원하므로 가장자리가 거칠거나 프레임 사이에 경계가 조금 달라질 수 있어요. 움직이는 WebP와 PNG는 GIF로 변환해 주세요.</p></details>
         <details><summary>파일의 크기와 화질은 어떻게 되나요?<ChevronDown size={17} /></summary><p>빠르게 모드는 긴 변 기준 사진 최대 2,048px·GIF 768px, 꼼꼼하게 모드는 사진 4,096px·GIF 1,024px로 저장해요. 작은 이미지는 확대하지 않아요. 사진은 4,000만 화소, GIF는 프레임당 400만 화소까지 지원해요. 복잡한 배경이나 반투명 물체는 결과가 정확하지 않을 수 있어요.</p></details>

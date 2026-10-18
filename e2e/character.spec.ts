@@ -12,6 +12,7 @@ async function uploadCharacter(page: Page) {
     ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 128, 128);
     ctx.strokeStyle = '#202020'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(64, 68, 44, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillRect(17, 61, 10, 13); ctx.fillRect(102, 61, 12, 13); // large breaks in both sides of the silhouette
     for (const x of [49, 79]) { ctx.beginPath(); ctx.arc(x, 59, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     ctx.fillStyle = '#202020'; ctx.fillRect(55, 80, 18, 10);
     ctx.fillStyle = 'white'; ctx.fillRect(60, 81, 7, 5);
@@ -51,40 +52,68 @@ test('real worker preserves white character features and removes only the exteri
   await page.screenshot({ path: 'artifacts/character-protection.png', fullPage: true });
 });
 
-test('real PNG editor erases, undoes, restores source pixels, cancels and downloads edits', async ({ page }) => {
+test('real region editor erases, undoes, restores from an imprecise stroke, cancels and downloads edits', async ({ page }) => {
   await page.goto('/'); await uploadCharacter(page);
-  const open = page.getByRole('button', { name: '지워진 부분 복원 / 직접 지우기' });
+  const open = page.getByRole('button', { name: '대략 표시해서 자동 보정' });
   await open.click();
   const editor = page.getByRole('dialog');
   const canvas = editor.locator('canvas');
+  const markCenter = async () => { const box = (await canvas.boundingBox())!; await canvas.click({ position: { x: box.width * 64 / 128, y: box.height * 68 / 128 } }); };
   await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
-  await editor.getByRole('slider', { name: '브러시 크기' }).fill('8');
-  await editor.getByRole('button', { name: '지우기', exact: true }).click();
-  await canvas.click({ position: { x: 64, y: 68 } });
+  await editor.getByRole('button', { name: '남은 배경 지우기', exact: true }).click();
+  await markCenter();
   const alpha = () => canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(64, 68, 1, 1).data[3]);
-  expect(await alpha()).toBe(0);
+  await expect.poll(alpha).toBe(0);
   await editor.getByRole('button', { name: '되돌리기' }).click();
-  expect(await alpha()).toBe(255);
-  await canvas.click({ position: { x: 64, y: 68 } });
+  await expect.poll(alpha).toBe(255);
+  await markCenter();
+  await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
   await editor.getByRole('button', { name: '편집 적용' }).click();
   await expect(editor).toHaveCount(0);
   expect((await resultPixel(page, 64, 68))[3]).toBe(0);
   await open.click();
   await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
-  await canvas.click({ position: { x: 64, y: 68 } });
+  const bounds = (await canvas.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width * 64 / 128, bounds.y + bounds.height * 68 / 128); await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 7 / 128, bounds.y + bounds.height * 68 / 128, { steps: 10 });
+  await expect(editor.getByRole('button', { name: '편집 적용' })).toBeDisabled();
+  await page.mouse.up();
+  await expect.poll(alpha).toBe(255);
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(7, 68, 1, 1).data[3])).toBe(0);
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(64, 100, 1, 1).data[3])).toBe(255);
+  await page.screenshot({ path: 'artifacts/smart-repair.png', fullPage: true });
+  await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
   await editor.getByRole('button', { name: '편집 적용' }).click();
   await expect(editor).toHaveCount(0);
   expect(await resultPixel(page, 64, 68)).toEqual([255, 255, 255, 255]);
   await open.click();
   await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
-  await editor.getByRole('button', { name: '지우기', exact: true }).click();
-  await canvas.click({ position: { x: 64, y: 68 } });
+  await editor.getByRole('button', { name: '남은 배경 지우기', exact: true }).click();
+  await markCenter();
   await editor.getByRole('button', { name: '취소', exact: true }).click();
   await expect(editor).toHaveCount(0);
   expect(await resultPixel(page, 64, 68)).toEqual([255, 255, 255, 255]);
   const promise = page.waitForEvent('download');
   await page.getByRole('button', { name: '투명 PNG 다운로드' }).click();
   expect((await promise).suggestedFilename()).toBe('white-character-off.png');
+});
+
+test('mobile region editor enlarges a small character and fits without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/'); await uploadCharacter(page);
+  await page.getByRole('button', { name: '대략 표시해서 자동 보정' }).click();
+  const editor = page.getByRole('dialog');
+  await expect(editor.getByRole('button', { name: '편집 적용' })).toBeEnabled();
+  const canvas = editor.locator('canvas');
+  const box = (await canvas.boundingBox())!;
+  expect(box.width).toBeGreaterThan(256);
+  expect(await editor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await editor.getByRole('button', { name: '남은 배경 지우기' }).click();
+  await canvas.click({ position: { x: box.width / 2, y: box.height * 68 / 128 } });
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(64, 68, 1, 1).data[3])).toBe(0);
+  await editor.getByRole('button', { name: '되돌리기' }).click();
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.getContext('2d')!.getImageData(64, 68, 1, 1).data[3])).toBe(255);
+  await page.screenshot({ path: 'artifacts/smart-repair-mobile.png' });
 });
 
 test('real GIF processing protects moving white interiors in every frame', async ({ page }) => {
@@ -115,5 +144,5 @@ test('real GIF processing protects moving white interiors in every frame', async
     const position = (30 * 64 + 30 + index * 4) * 4;
     expect([...frame.patch.slice(position, position + 4)]).toEqual([255, 255, 255, 255]);
   });
-  await expect(page.getByRole('button', { name: '지워진 부분 복원 / 직접 지우기' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '대략 표시해서 자동 보정' })).toHaveCount(0);
 });
