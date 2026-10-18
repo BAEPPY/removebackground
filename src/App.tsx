@@ -3,9 +3,9 @@ import { ArrowDown, ArrowDownToLine, ArrowRight, Brush, Check, ChevronDown, Imag
 import { downloadName, validateFile } from './media';
 import type { ProcessUpdate, Quality, RemovalMode } from './types';
 import MaskEditor from './MaskEditor';
-import type { RepairMemory } from './repairHints';
+import type { EditorMemory } from './repairProtocol';
 
-type Result = { url: string; blob: Blob; width: number; height: number; frames: number; repair?: RepairMemory };
+type Result = { url: string; blob: Blob; width: number; height: number; frames: number; repair?: EditorMemory };
 const backgrounds = [
   { name: '투명', color: 'transparent' }, { name: '화이트', color: '#ffffff' },
   { name: '라임', color: '#d9efbc' }, { name: '라벤더', color: '#dcd5f1' }, { name: '다크', color: '#30332d' },
@@ -122,7 +122,7 @@ export default function App() {
     setMode(value); setError(''); setResult(null); setEditing(false);
   }
 
-  function applyEdit(blob: Blob, repair?: RepairMemory) {
+  function applyEdit(blob: Blob, repair?: EditorMemory) {
     if (!result) return;
     URL.revokeObjectURL(result.url);
     setResult({ ...result, blob, repair, url: makeUrl(blob) }); setEditing(false); setView('result');
@@ -189,7 +189,7 @@ export default function App() {
           </div>
           <div className="preview-toolbar"><div className="swatches" aria-label="미리보기 배경색">{backgrounds.map((item) => <button key={item.name} className={`swatch ${item.color === 'transparent' ? 'checker' : ''} ${background === item.color ? 'chosen' : ''}`} style={item.color === 'transparent' ? {} : { background: item.color }} onClick={() => setBackground(item.color)} title={`${item.name} 미리보기`} aria-label={`${item.name} 배경으로 미리보기`} aria-pressed={background === item.color} />)}<span>미리보기 배경</span></div><button className="view-toggle" disabled={!canCompare} onClick={() => setView(view === 'compare' ? 'result' : 'compare')}><Layers2 size={14} />{view === 'compare' ? '결과만 보기' : '전후 비교'}</button></div>
           <div className="preview-bottom">{result ? <span><Check size={13} /> {result.width} × {result.height}px · {result.frames > 1 ? `${result.frames}프레임 · ` : ''}{(result.blob.size / 1024 / 1024).toFixed(2)}MB</span> : <span><MousePointer2 size={14} /> 슬라이더를 움직여 전후를 비교해 보세요</span>}<span>다운로드는 투명하게</span></div>
-          {result && <div className="repair-controls">{result.blob.type === 'image/png' ? <button onClick={() => { worker.current?.terminate(); worker.current = null; setEditing(true); }}><Brush size={15} />대략 표시해서 자동 보정</button> : <p>캐릭터 보호는 GIF의 모든 프레임에 적용돼요. 영역 보정은 PNG에서 지원해요.</p>}</div>}
+          {result && <div className="repair-controls"><button onClick={() => { worker.current?.terminate(); worker.current = null; setEditing(true); }}><Brush size={15} />대략 표시해서 자동 보정</button></div>}
         </div>
       </section>
 
@@ -198,7 +198,7 @@ export default function App() {
       <section className="how-section" id="how"><div className="section-heading"><span className="section-kicker">HOW IT WORKS</span><h2>세 번이면 충분해요.</h2><p>덜어내는 과정도, 가벼워야 하니까.</p></div><div className="steps"><div><span>01</span><h3>이미지 가져오기</h3><p>사진이나 GIF를 선택하거나<br />이 페이지에 끌어다 놓으세요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>02</span><h3>배경 지우기</h3><p>캐릭터 보호 또는 사진 AI를 골라요.<br />필요한 부분은 복원으로 다듬어요.</p></div><ArrowRight className="step-arrow" size={22} /><div><span>03</span><h3>자유롭게 사용하기</h3><p>투명한 PNG 또는 GIF로 저장해<br />원하는 곳에 활용하세요.</p></div></div></section>
 
       <section className="faq-section" id="faq"><div><span className="section-kicker">GOOD TO KNOW</span><h2>궁금한 점이 있나요?</h2><p>시작하기 전에 알아두면 좋아요.</p><ArrowDown size={22} /></div><div className="faq-list">
-        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. PNG 결과의 ‘대략 표시해서 자동 보정’은 칠한 선 전체를 반영해요. 윤곽이 열려 있어도 표시한 곳과 주변을 복원하고, 같은 곳을 다시 칠하면 더 넓게 보정해요. 적용 후 다시 열어도 이전 표시를 기억해요. 원치 않는 곳까지 반영되면 되돌리거나 반대 도구로 수정할 수 있어요. GIF에는 캐릭터 보호가 프레임마다 적용되며 영역 보정은 PNG에서 지원해요.</p></details>
+        <details><summary>흰 털이나 눈·입이 지워지면 어떻게 하나요?<ChevronDown size={17} /></summary><p>단색 배경의 그림은 기본 선택된 캐릭터 보호로 처리해 주세요. 캔버스 바깥과 이어진 배경만 지우고, 외곽선 안의 흰색과 원래 색을 보존해요. 끊긴 선은 그림 크기에 맞춰 보완해요. 사진·GIF 결과의 ‘대략 표시해서 자동 보정’은 칠한 선 전체를 반영해요. 윤곽이 열려 있어도 표시한 곳과 주변을 복원하고, 같은 곳을 다시 칠하면 더 넓게 보정해요. 적용 후 다시 열어도 이전 표시를 기억해요. 원치 않는 곳까지 반영되면 되돌리거나 반대 도구로 수정할 수 있어요. 사진 AI 결과도 같은 방식으로 수정할 수 있어요. GIF는 프레임을 골라 수정하거나 모든 프레임의 같은 위치에 적용할 수 있어요. 움직임 미리보기로 확인한 뒤 저장해 주세요.</p></details>
         <details><summary>정말 무료인가요?<ChevronDown size={17} /></summary><p>네. 회원가입이나 API 키 없이 사용할 수 있어요. 배경 제거는 내 기기의 연산으로 진행돼요. 캐릭터 보호는 모델 다운로드 없이 작동하고, 사진 AI는 처음에 AI 모델과 실행 파일을 다운로드해요.</p></details>
         <details><summary>움짤도 움직인 채로 저장되나요?<ChevronDown size={17} /></summary><p>GIF의 각 프레임을 처리해 원본의 프레임 수, 재생 간격과 반복 설정을 유지해요. 최대 120프레임·20MB까지 지원해요. GIF는 최대 256색과 완전 투명만 지원하므로 가장자리가 거칠거나 프레임 사이에 경계가 조금 달라질 수 있어요. 움직이는 WebP와 PNG는 GIF로 변환해 주세요.</p></details>
         <details><summary>파일의 크기와 화질은 어떻게 되나요?<ChevronDown size={17} /></summary><p>빠르게 모드는 긴 변 기준 사진 최대 2,048px·GIF 768px, 꼼꼼하게 모드는 사진 4,096px·GIF 1,024px로 저장해요. 작은 이미지는 확대하지 않아요. 사진은 4,000만 화소, GIF는 프레임당 400만 화소까지 지원해요. 복잡한 배경이나 반투명 물체는 결과가 정확하지 않을 수 있어요.</p></details>

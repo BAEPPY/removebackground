@@ -4,6 +4,7 @@ import { GIFEncoder } from 'gifenc';
 import { createCompositor, fitSize, MAX_FRAMES, preserveAlpha, readRepeat, transparentPalette, validateFile } from './media';
 import type { ProcessRequest, ProcessUpdate } from './types';
 import { removeCharacterBackground } from './character';
+import { refineEdges } from './edgeMatte';
 
 const send = (update: ProcessUpdate) => self.postMessage(update);
 const progress = (value: number, message: string, detail?: string) => send({ type: 'progress', value, message, detail });
@@ -75,7 +76,7 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
       outputPixels = context.getImageData(0, 0, width, height);
       preserveAlpha(outputPixels.data, originalPixels.data);
     }
-    context.putImageData(outputPixels, 0, 0);
+    context.putImageData(new ImageData(refineEdges(originalPixels.data, outputPixels.data, width, height), width, height), 0, 0);
     const blob = await surface.convertToBlob({ type: 'image/png' });
     send({ type: 'done', blob, width, height, frames: 1 });
     return;
@@ -116,7 +117,7 @@ async function processFile({ file, quality, mode }: ProcessRequest) {
       outputPixels = output.context.getImageData(0, 0, width, height).data;
       preserveAlpha(outputPixels, originalPixels.data);
     }
-    const { palette, indices } = transparentPalette(outputPixels);
+    const { palette, indices } = transparentPalette(refineEdges(originalPixels.data, outputPixels, width, height));
     encoder.writeFrame(indices, width, height, {
       palette, transparent: true, transparentIndex: 0, dispose: 2,
       // gifuct defaults zero delays to 100ms, so use the original centiseconds.

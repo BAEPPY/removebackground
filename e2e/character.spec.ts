@@ -144,5 +144,5 @@ test('real GIF processing protects moving white interiors in every frame', async
     const position = (30 * 64 + 30 + index * 4) * 4;
     expect([...frame.patch.slice(position, position + 4)]).toEqual([255, 255, 255, 255]);
   });
-  await expect(page.getByRole('button', { name: '대략 표시해서 자동 보정' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '대략 표시해서 자동 보정' })).toBeVisible();
 });

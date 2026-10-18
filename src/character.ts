@@ -21,6 +21,11 @@ function backdrop(pixels: Uint8ClampedArray, border: number[]) {
   return color;
 }
 
+export function solidBackdrop(pixels: Uint8ClampedArray, width: number, height: number) {
+  try { return backdrop(pixels, borderIndices(width, height)); }
+  catch { return null; }
+}
+
 // Separable sliding-window morphology keeps processing O(width * height).
 function filterMask(input: Uint8Array, width: number, height: number, radius: number, dilate: boolean, horizontal: boolean) {
   const output = new Uint8Array(input.length);
