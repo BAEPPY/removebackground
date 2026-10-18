@@ -49,7 +49,8 @@ test('JFIF decoding, processing controls and PNG download with a worker fixture'
       onmessage: ((event: { data: unknown }) => void) | null = null;
       onerror = null;
       timer?: ReturnType<typeof setTimeout>;
-      async postMessage({ file }: { file: File }) {
+      async postMessage({ file, mode }: { file: File; mode: string }) {
+        if (mode !== 'photo') throw new Error('Photo mode was not sent to the worker');
         if (file.type !== 'image/jpeg') throw new Error('JFIF MIME type was not normalized');
         const bitmap = await createImageBitmap(file);
         if (bitmap.width !== 32 || bitmap.height !== 24) throw new Error('JFIF did not decode correctly');
@@ -65,6 +66,7 @@ test('JFIF decoding, processing controls and PNG download with a worker fixture'
     Object.defineProperty(window, 'Worker', { value: FixtureWorker });
   });
   await page.goto('/');
+  await page.getByRole('button', { name: '사진 AI', exact: true }).click();
   const jpeg = await page.evaluate(() => {
     const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 24;
     const context = canvas.getContext('2d')!;

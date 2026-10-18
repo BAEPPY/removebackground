@@ -1,8 +1,9 @@
-import { removeBackground, type Config } from '@imgly/background-removal';
+import type { Config } from '@imgly/background-removal';
 import { parseGIF, decompressFrame } from 'gifuct-js';
 import { GIFEncoder } from 'gifenc';
 import { createCompositor, fitSize, MAX_FRAMES, preserveAlpha, readRepeat, transparentPalette, validateFile } from './media';
 import type { ProcessRequest, ProcessUpdate } from './types';
+import { removeCharacterBackground } from './character';
 
 const send = (update: ProcessUpdate) => self.postMessage(update);
 const progress = (value: number, message: string, detail?: string) => send({ type: 'progress', value, message, detail });
@@ -13,7 +14,7 @@ function canvas(width: number, height: number) {
   return { surface, context };
 }
 
-async function processFile({ file, quality }: ProcessRequest) {
+async function processFile({ file, quality, mode }: ProcessRequest) {
   const invalid = validateFile(file);
   if (invalid) throw new Error(invalid);
   const data = await file.arrayBuffer();
@@ -49,6 +50,11 @@ async function processFile({ file, quality }: ProcessRequest) {
       if (!isGif && key === 'compute:encode') progress(90, '투명한 PNG로 저장하고 있어요');
     },
   };
+  // Keep the character path independent of AI/model downloads.
+  async function removePhoto(surface: OffscreenCanvas) {
+    const { removeBackground } = await import('@imgly/background-removal');
+    return removeBackground(await surface.convertToBlob({ type: 'image/png' }), config);
+  }
   if (!isGif) {
     progress(8, '사진을 불러오고 있어요');
     const bitmap = await createImageBitmap(file);
@@ -56,15 +62,19 @@ async function processFile({ file, quality }: ProcessRequest) {
     const { surface, context } = canvas(width, height);
     context.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
-    progress(18, '주인공을 찾고 있어요', '처리 중에도 이 탭을 열어 두세요');
+    progress(18, mode === 'character' ? '캐릭터 안쪽을 보호하고 있어요' : '주인공을 찾고 있어요', '처리 중에도 이 탭을 열어 두세요');
     const originalPixels = context.getImageData(0, 0, width, height);
-    const removed = await removeBackground(await surface.convertToBlob({ type: 'image/png' }), config);
-    const cutout = await createImageBitmap(removed);
-    context.clearRect(0, 0, width, height);
-    context.drawImage(cutout, 0, 0, width, height);
-    cutout.close();
-    const outputPixels = context.getImageData(0, 0, width, height);
-    preserveAlpha(outputPixels.data, originalPixels.data);
+    let outputPixels: ImageData;
+    if (mode === 'character') {
+      outputPixels = new ImageData(removeCharacterBackground(originalPixels.data, width, height), width, height);
+    } else {
+      const cutout = await createImageBitmap(await removePhoto(surface));
+      context.clearRect(0, 0, width, height);
+      context.drawImage(cutout, 0, 0, width, height);
+      cutout.close();
+      outputPixels = context.getImageData(0, 0, width, height);
+      preserveAlpha(outputPixels.data, originalPixels.data);
+    }
     context.putImageData(outputPixels, 0, 0);
     const blob = await surface.convertToBlob({ type: 'image/png' });
     send({ type: 'done', blob, width, height, frames: 1 });
@@ -95,13 +105,17 @@ async function processFile({ file, quality }: ProcessRequest) {
     output.context.drawImage(source.surface, 0, 0, width, height);
     const originalPixels = output.context.getImageData(0, 0, width, height);
     progress(12 + frameNumber / frames.length * 84, '움직임은 남기고, 배경은 지우는 중', `${frameNumber + 1} / ${frames.length} 프레임 · 창을 닫지 말아 주세요`);
-    const removed = await removeBackground(await output.surface.convertToBlob({ type: 'image/png' }), config);
-    const bitmap = await createImageBitmap(removed);
-    output.context.clearRect(0, 0, width, height);
-    output.context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-    const outputPixels = output.context.getImageData(0, 0, width, height).data;
-    preserveAlpha(outputPixels, originalPixels.data);
+    let outputPixels: Uint8ClampedArray;
+    if (mode === 'character') {
+      outputPixels = removeCharacterBackground(originalPixels.data, width, height);
+    } else {
+      const bitmap = await createImageBitmap(await removePhoto(output.surface));
+      output.context.clearRect(0, 0, width, height);
+      output.context.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+      outputPixels = output.context.getImageData(0, 0, width, height).data;
+      preserveAlpha(outputPixels, originalPixels.data);
+    }
     const { palette, indices } = transparentPalette(outputPixels);
     encoder.writeFrame(indices, width, height, {
       palette, transparent: true, transparentIndex: 0, dispose: 2,
